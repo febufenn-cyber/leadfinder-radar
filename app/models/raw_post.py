@@ -8,10 +8,10 @@ from sqlalchemy import DateTime, Text, UniqueConstraint, func
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column
 
-import app.db.base as base
+from app.db.base import Base
 
 
-class RawPost(base.Base):
+class RawPost(Base):
     __tablename__ = "raw_posts"
     __table_args__ = (
         UniqueConstraint("source", "external_id", name="uq_raw_posts_source_external_id"),

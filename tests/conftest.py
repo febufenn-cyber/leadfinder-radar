@@ -15,6 +15,8 @@ TEST_DATABASE_URL = os.environ.get(
 @pytest.fixture
 async def db_session():
     """Fresh schema per test — engine bound to this test's event loop."""
+    import app.models.event  # noqa: F401 — register tables on Base.metadata
+    import app.models.raw_post  # noqa: F401
     from app.db.base import Base
 
     engine = create_async_engine(TEST_DATABASE_URL)

@@ -8,10 +8,10 @@ from sqlalchemy import DateTime, Text, func
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column
 
-import app.db.base as base
+from app.db.base import Base
 
 
-class Event(base.Base):
+class Event(Base):
     __tablename__ = "events"
 
     id: Mapped[int] = mapped_column(primary_key=True)
