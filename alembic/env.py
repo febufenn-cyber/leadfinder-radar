@@ -8,6 +8,7 @@ from sqlalchemy import pool
 from sqlalchemy.ext.asyncio import async_engine_from_config
 
 import app.models.event  # noqa: F401 — register tables on Base.metadata
+import app.models.llm_call  # noqa: F401
 import app.models.raw_post  # noqa: F401
 from app.core.config import get_settings
 from app.db.base import Base

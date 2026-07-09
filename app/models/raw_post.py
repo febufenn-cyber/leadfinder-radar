@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from datetime import datetime
 
-from sqlalchemy import DateTime, Text, UniqueConstraint, func
+from sqlalchemy import DateTime, Integer, Text, UniqueConstraint, func
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -34,6 +34,9 @@ class RawPost(Base):
     # Pipeline fields
     pack: Mapped[str] = mapped_column(Text)
     matched_keywords: Mapped[list] = mapped_column(JSONB, default=list)
+    fit_score: Mapped[int | None] = mapped_column(Integer)
+    score: Mapped[dict | None] = mapped_column(JSONB)  # full LeadScore (DESIGN §3.3)
+    classified_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     fetched_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()
     )

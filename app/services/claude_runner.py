@@ -1,0 +1,192 @@
+"""Claude subprocess runner — ported from Thesis Studio's claude_service.py (DESIGN §4).
+
+Calls the Claude Code CLI (`claude -p`) as a subprocess; auth is the CLI's own
+Max OAuth session (login once per host with `claude /login`). The flag stack is
+inherited verbatim from Thesis Studio, where it was tuned the hard way:
+
+- `--strict-mcp-config` + empty config strips this host's personal MCP servers
+  out of the prompt prefix.
+- `--system-prompt-file` (replace, not append) — append mode glues onto Claude
+  Code's full system prompt and costs ~5x more cache_creation tokens.
+- `--no-session-persistence` keeps the CLI from writing session state to disk.
+
+Contract difference from Thesis Studio: `run_json` NEVER raises. Every call —
+success or failure — writes an llm_calls audit row (the M-milestone DoD), and
+failures return None so the pipeline can degrade gracefully (e.g. alert
+unscored rather than lose a lead).
+"""
+
+from __future__ import annotations
+
+import asyncio
+import json
+import logging
+import os
+import re
+import tempfile
+import time
+from decimal import Decimal
+from pathlib import Path
+
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from app.core.config import get_settings
+from app.models.llm_call import LlmCall
+
+log = logging.getLogger(__name__)
+
+_EMPTY_MCP_CONFIG = str(Path(__file__).parent / "empty_mcp_config.json")
+_FENCE_RE = re.compile(r"^```[a-zA-Z]*\s*|\s*```$")
+
+
+def _extract_json(text: str) -> dict | None:
+    """Best-effort JSON object extraction: strip fences, else first {...} span."""
+    candidate = _FENCE_RE.sub("", text.strip())
+    for attempt in (candidate, candidate[candidate.find("{") : candidate.rfind("}") + 1]):
+        if not attempt:
+            continue
+        try:
+            parsed = json.loads(attempt)
+        except json.JSONDecodeError:
+            continue
+        if isinstance(parsed, dict):
+            return parsed
+    return None
+
+
+def _extract_cost(result_event: dict) -> Decimal | None:
+    raw = result_event.get("total_cost_usd")
+    if raw is None:
+        return None
+    try:
+        return Decimal(str(raw)).quantize(Decimal("0.000001"))
+    except (ValueError, ArithmeticError):
+        return None
+
+
+class ClaudeRunner:
+    """One-shot JSON completions on tier 'fast' (Haiku) or 'standard' (Sonnet)."""
+
+    def __init__(self) -> None:
+        settings = get_settings()
+        self.cli_path = settings.CLAUDE_CLI_PATH
+        self._models = {
+            "fast": settings.CLAUDE_FAST_MODEL,
+            "standard": settings.CLAUDE_STANDARD_MODEL,
+        }
+
+    async def _run_cli(self, args: list[str], timeout: int) -> tuple[int, bytes, bytes]:
+        """Subprocess boundary — overridden in tests."""
+        proc = await asyncio.create_subprocess_exec(
+            *args,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+            cwd=tempfile.gettempdir(),
+        )
+        try:
+            stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=timeout)
+        except TimeoutError:
+            proc.kill()
+            await proc.wait()
+            return -1, b"", f"timeout after {timeout}s".encode()
+        return proc.returncode or 0, stdout, stderr
+
+    async def run_json(
+        self,
+        *,
+        purpose: str,
+        system_prompt: str,
+        user_prompt: str,
+        tier: str,
+        session: AsyncSession,
+        raw_post_id: int | None = None,
+        timeout: int | None = None,
+    ) -> dict | None:
+        """One completion expected to return a JSON object. Never raises.
+
+        Adds an LlmCall row to `session` (caller commits). Returns the parsed
+        payload dict, or None on any failure (details in the audit row + log).
+        """
+        settings = get_settings()
+        model = self._models[tier]
+        timeout = timeout or settings.CLASSIFY_TIMEOUT_SECONDS
+
+        fd, sys_file = tempfile.mkstemp(suffix=".txt", prefix="leadfinder_sysprompt_")
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            f.write(system_prompt)
+
+        started = time.monotonic()
+        payload = usage = None
+        cost = None
+        error = None
+        try:
+            args = [
+                self.cli_path, "-p",
+                "--model", model,
+                "--tools", "",
+                "--disable-slash-commands",
+                "--no-session-persistence",
+                "--strict-mcp-config",
+                "--mcp-config", _EMPTY_MCP_CONFIG,
+                "--system-prompt-file", sys_file,
+                "--output-format", "json",
+                user_prompt,
+            ]
+            rc, stdout, stderr = await self._run_cli(args, timeout)
+
+            result_event: dict | None = None
+            if stdout:
+                try:
+                    result_event = json.loads(stdout.decode("utf-8", errors="replace"))
+                except json.JSONDecodeError:
+                    result_event = None
+
+            if rc != 0:
+                error = f"claude CLI exited rc={rc}: {stderr.decode(errors='replace')[-500:]}"
+            elif result_event is None:
+                error = "claude CLI produced no parseable result event"
+            elif result_event.get("is_error"):
+                error = f"claude CLI API error status={result_event.get('api_error_status')}"
+            else:
+                usage = result_event.get("usage", {})
+                cost = _extract_cost(result_event)
+                payload = _extract_json(result_event.get("result", ""))
+                if payload is None:
+                    error = "result text was not a valid JSON object"
+        except Exception as exc:  # audit row must survive anything
+            error = f"runner exception: {exc!r}"
+        finally:
+            try:
+                os.unlink(sys_file)
+            except OSError:
+                pass
+
+        usage = usage or {}
+        session.add(
+            LlmCall(
+                purpose=purpose,
+                tier=tier,
+                model=model,
+                input_tokens=int(usage.get("input_tokens", 0) or 0),
+                output_tokens=int(usage.get("output_tokens", 0) or 0),
+                cached_input_tokens=int(usage.get("cache_read_input_tokens", 0) or 0),
+                cost_usd=cost,
+                duration_ms=int((time.monotonic() - started) * 1000),
+                success=payload is not None,
+                error=error,
+                raw_post_id=raw_post_id,
+            )
+        )
+        if error:
+            log.warning("llm call failed purpose=%s tier=%s: %s", purpose, tier, error)
+        return payload
+
+
+_runner: ClaudeRunner | None = None
+
+
+def get_runner() -> ClaudeRunner:
+    global _runner
+    if _runner is None:
+        _runner = ClaudeRunner()
+    return _runner

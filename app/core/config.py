@@ -38,6 +38,16 @@ class Settings(BaseSettings):
     POLL_INTERVAL_MINUTES: int = 2
     PACKS_DIR: str = "packs"
 
+    # ---- Reddit OAuth (empty -> RSS fallback adapter) ----
+    REDDIT_CLIENT_ID: str = ""
+    REDDIT_CLIENT_SECRET: str = ""
+
+    # ---- Claude (CLI subprocess on Max OAuth; DESIGN §4 auth note) ----
+    CLAUDE_CLI_PATH: str = "claude"
+    CLAUDE_FAST_MODEL: str = "claude-haiku-4-5-20251001"
+    CLAUDE_STANDARD_MODEL: str = "claude-sonnet-4-6"
+    CLASSIFY_TIMEOUT_SECONDS: int = 90
+
 
 @lru_cache
 def get_settings() -> Settings:

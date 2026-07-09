@@ -16,6 +16,7 @@ TEST_DATABASE_URL = os.environ.get(
 async def db_factory():
     """Fresh schema per test; returns a session factory bound to this test's event loop."""
     import app.models.event  # noqa: F401 — register tables on Base.metadata
+    import app.models.llm_call  # noqa: F401
     import app.models.raw_post  # noqa: F401
     from app.db.base import Base
 
