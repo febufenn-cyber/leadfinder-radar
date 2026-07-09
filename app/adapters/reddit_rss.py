@@ -10,7 +10,7 @@ from __future__ import annotations
 import asyncio
 import logging
 from dataclasses import dataclass, field
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import Any
 from urllib.parse import quote
 
@@ -22,9 +22,16 @@ from app.packs import OfferPack
 
 log = logging.getLogger(__name__)
 
-SUB_FEED = "https://www.reddit.com/r/{sub}/new/.rss?limit=50"
+# Unauthenticated Reddit rate limits are tight (~10 req/min/IP and it 429s fast),
+# so batch everything: ONE multireddit feed for all subs, ONE OR-combined search.
+SUB_FEED = "https://www.reddit.com/r/{subs}/new/.rss?limit=50"
 SEARCH_FEED = "https://www.reddit.com/search.rss?q={query}&sort=new&limit=50"
-_FETCH_SPACING_SECONDS = 1.0
+_FETCH_SPACING_SECONDS = 2.0
+
+# Per-URL cooldown after a 429: retrying every cycle keeps the throttle hot.
+# search.rss in particular is limited far harder than sub feeds.
+_cooldown_until: dict[str, datetime] = {}
+_DEFAULT_COOLDOWN = timedelta(minutes=15)
 
 
 @dataclass
@@ -89,25 +96,47 @@ def parse_feed(xml: bytes | str) -> list[RawPostData]:
 
 
 def _feed_urls(pack: OfferPack) -> list[str]:
-    urls = [SUB_FEED.format(sub=sub) for sub in pack.reddit.subreddits]
-    urls += [
-        SEARCH_FEED.format(query=quote(f'"{q}"')) for q in pack.reddit.search_queries
-    ]
+    urls = []
+    if pack.reddit.subreddits:
+        urls.append(SUB_FEED.format(subs="+".join(pack.reddit.subreddits)))
+    if pack.reddit.search_queries:
+        combined = " OR ".join(f'"{q}"' for q in pack.reddit.search_queries)
+        urls.append(SEARCH_FEED.format(query=quote(combined)))
     return urls
 
 
 async def poll(pack: OfferPack, client: httpx.AsyncClient) -> list[RawPostData]:
     """Fetch all feeds for a pack; in-batch dedup by external_id; failures are logged."""
     seen: dict[str, RawPostData] = {}
-    for i, url in enumerate(_feed_urls(pack)):
-        if i:
+    first_fetch = True
+    for url in _feed_urls(pack):
+        now = datetime.now(UTC)
+        if url in _cooldown_until and now < _cooldown_until[url]:
+            log.info("feed on 429 cooldown until %s: %s", _cooldown_until[url], url)
+            continue
+        if not first_fetch:
             await asyncio.sleep(_FETCH_SPACING_SECONDS)
+        first_fetch = False
         try:
             resp = await client.get(url)
             resp.raise_for_status()
+        except httpx.HTTPStatusError as exc:
+            if exc.response.status_code == 429:
+                retry_after = exc.response.headers.get("retry-after", "")
+                cooldown = (
+                    timedelta(seconds=int(retry_after))
+                    if retry_after.isdigit()
+                    else _DEFAULT_COOLDOWN
+                )
+                _cooldown_until[url] = now + max(cooldown, _DEFAULT_COOLDOWN)
+                log.warning("429 — cooling %s down until %s", url, _cooldown_until[url])
+            else:
+                log.warning("feed fetch failed url=%s err=%s", url, exc)
+            continue
         except httpx.HTTPError as exc:
             log.warning("feed fetch failed url=%s err=%s", url, exc)
             continue
+        _cooldown_until.pop(url, None)
         for post in parse_feed(resp.content):
             seen.setdefault(post.external_id, post)
     return list(seen.values())
