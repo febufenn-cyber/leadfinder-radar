@@ -1,5 +1,9 @@
 # LeadFinder M0 Implementation Plan
 
+> **Status: COMPLETED 2026-07-10.** All 9 tasks executed and committed (see git log).
+> Live-run findings folded in: reddit feeds batched (multireddit + OR search) with
+> 429 cooldowns; adversarial review (18 findings) applied in commit 88b993f.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** M0 of LeadFinder per `DESIGN.md` §7 — scaffold, Postgres, Reddit RSS poller for one offer pack (robofox_web), raw Telegram alert with link. "Already useful — a personal F5Bot."
