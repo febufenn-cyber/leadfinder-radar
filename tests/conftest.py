@@ -13,8 +13,8 @@ TEST_DATABASE_URL = os.environ.get(
 
 
 @pytest.fixture
-async def db_session():
-    """Fresh schema per test — engine bound to this test's event loop."""
+async def db_factory():
+    """Fresh schema per test; returns a session factory bound to this test's event loop."""
     import app.models.event  # noqa: F401 — register tables on Base.metadata
     import app.models.raw_post  # noqa: F401
     from app.db.base import Base
@@ -23,10 +23,14 @@ async def db_session():
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.drop_all)
         await conn.run_sync(Base.metadata.create_all)
-    factory = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
-    async with factory() as session:
-        yield session
+    yield async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
     await engine.dispose()
+
+
+@pytest.fixture
+async def db_session(db_factory):
+    async with db_factory() as session:
+        yield session
 
 
 def make_post_row(**overrides) -> dict:
