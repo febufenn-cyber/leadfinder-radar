@@ -1,0 +1,83 @@
+# Few-shot examples for the robofox_web classifier (DESIGN §3.3).
+#
+# ⚠️ STARTER SET — replace/extend with ~10 real positives and ~10 near-miss
+# negatives from the actual Threads/Reddit examples you've collected. The
+# classifier's precision depends on these being REAL, not synthetic.
+examples:
+  - label: positive
+    text: "Opening a bakery next month and I need a website with online ordering. Budget is around $500. Who should I talk to?"
+    score:
+      is_demand_post: true
+      offer_pack: robofox_web
+      intent: explicit_request
+      buyer_type: business_owner
+      budget_signal: stated
+      urgency: now
+      disqualifiers: []
+      fit_score: 88
+      one_line_summary: "Bakery owner needs an ordering website, $500 budget, launching next month"
+
+  - label: positive
+    text: "Any recommendations for someone who builds simple landing pages? My consulting practice needs one, nothing fancy."
+    score:
+      is_demand_post: true
+      offer_pack: robofox_web
+      intent: recommendation_ask
+      buyer_type: business_owner
+      budget_signal: implied
+      urgency: soon
+      disqualifiers: []
+      fit_score: 72
+      one_line_summary: "Consultant asking for landing-page builder recommendations"
+
+  - label: positive
+    text: "My shop's website looks terrible on phones and I'm losing customers. So frustrated with this."
+    score:
+      is_demand_post: true
+      offer_pack: robofox_web
+      intent: problem_statement
+      buyer_type: business_owner
+      budget_signal: none
+      urgency: exploring
+      disqualifiers: []
+      fit_score: 55
+      one_line_summary: "Shop owner frustrated with non-mobile-friendly site; no explicit ask yet"
+
+  - label: near_miss
+    text: "[FOR HIRE] Experienced web developer available for freelance projects. Portfolio in comments."
+    score:
+      is_demand_post: false
+      offer_pack: robofox_web
+      intent: explicit_request
+      buyer_type: unclear
+      budget_signal: none
+      urgency: exploring
+      disqualifiers: [agency_seeking_leads]
+      fit_score: 2
+      one_line_summary: "Seller advertising services, not a buyer"
+
+  - label: near_miss
+    text: "Looking for a web developer to join our startup full-time, equity + salary."
+    score:
+      is_demand_post: false
+      offer_pack: robofox_web
+      intent: explicit_request
+      buyer_type: founder
+      budget_signal: stated
+      urgency: now
+      disqualifiers: [full_time_job]
+      fit_score: 8
+      one_line_summary: "Full-time hiring post, not a freelance/service lead"
+
+  - label: near_miss
+    text: "Is there any way to get a website built completely free? Student here, no budget at all."
+    score:
+      is_demand_post: true
+      offer_pack: robofox_web
+      intent: explicit_request
+      buyer_type: student
+      budget_signal: none
+      urgency: exploring
+      disqualifiers: [wants_free]
+      fit_score: 10
+      one_line_summary: "Wants a free website; no budget"

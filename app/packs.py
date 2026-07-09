@@ -29,6 +29,7 @@ class OfferPack(BaseModel):
     reddit: RedditConfig = RedditConfig()
     keywords: PackKeywords
     max_age_minutes: int = 180  # DESIGN §3.1: stale threads convert poorly
+    threshold: int = 65  # DESIGN §3.3: min fit_score to surface; below is stored only
 
 
 def load_packs(packs_dir: Path, include_disabled: bool = False) -> list[OfferPack]:
