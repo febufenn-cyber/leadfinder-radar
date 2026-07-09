@@ -1,0 +1,33 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<feed xmlns="http://www.w3.org/2005/Atom" xmlns:media="http://search.yahoo.com/mrss/">
+  <category term="smallbusiness" label="r/smallbusiness"/>
+  <updated>2026-07-10T00:20:00+00:00</updated>
+  <id>/r/smallbusiness/new/.rss</id>
+  <title>newest submissions : smallbusiness</title>
+  <entry>
+    <author>
+      <name>/u/shopowner42</name>
+      <uri>https://www.reddit.com/user/shopowner42</uri>
+    </author>
+    <category term="smallbusiness" label="r/smallbusiness"/>
+    <content type="html">&lt;div class="md"&gt;&lt;p&gt;I need a website for my bakery, budget around $500. Any recommendations?&lt;/p&gt;&lt;/div&gt;</content>
+    <id>t3_1abc23</id>
+    <link href="https://www.reddit.com/r/smallbusiness/comments/1abc23/need_a_website_for_my_bakery/"/>
+    <updated>2026-07-10T00:10:00+00:00</updated>
+    <published>2026-07-10T00:10:00+00:00</published>
+    <title>Need a website for my bakery</title>
+  </entry>
+  <entry>
+    <author>
+      <name>/u/fitcoach9</name>
+      <uri>https://www.reddit.com/user/fitcoach9</uri>
+    </author>
+    <category term="smallbusiness" label="r/smallbusiness"/>
+    <content type="html">&lt;div class="md"&gt;&lt;p&gt;Sharing my journey growing a gym to 200 members.&lt;/p&gt;&lt;/div&gt;</content>
+    <id>t3_1abc24</id>
+    <link href="https://www.reddit.com/r/smallbusiness/comments/1abc24/growing_my_gym/"/>
+    <updated>2026-07-10T00:05:00+00:00</updated>
+    <published>2026-07-10T00:05:00+00:00</published>
+    <title>How I grew my gym to 200 members</title>
+  </entry>
+</feed>

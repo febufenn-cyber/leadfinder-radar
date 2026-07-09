@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<feed xmlns="http://www.w3.org/2005/Atom">
+  <updated>2026-07-10T00:20:00+00:00</updated>
+  <id>/search.rss</id>
+  <title>reddit: search results - "need a website"</title>
+  <entry>
+    <author>
+      <name>/u/cafedreamer</name>
+      <uri>https://www.reddit.com/user/cafedreamer</uri>
+    </author>
+    <category term="Entrepreneur" label="r/Entrepreneur"/>
+    <content type="html">&lt;div class="md"&gt;&lt;p&gt;Opening a cafe next month and I need a website + online menu. Who should I talk to?&lt;/p&gt;&lt;/div&gt;</content>
+    <id>t3_1xyz99</id>
+    <link href="https://www.reddit.com/r/Entrepreneur/comments/1xyz99/need_a_website_and_menu/"/>
+    <updated>2026-07-10T00:12:00+00:00</updated>
+    <published>2026-07-10T00:12:00+00:00</published>
+    <title>Need a website and online menu for my cafe</title>
+  </entry>
+</feed>
