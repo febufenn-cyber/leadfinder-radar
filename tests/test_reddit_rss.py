@@ -57,6 +57,20 @@ def test_parse_garbage_returns_empty():
     assert parse_feed(b"not xml at all") == []
 
 
+def test_parse_rejects_non_http_links():
+    """A hostile feed entry must not smuggle javascript: URIs into alert/dashboard hrefs."""
+    evil = (
+        (FIXTURES / "reddit_new.xml")
+        .read_text()
+        .replace(
+            "https://www.reddit.com/r/smallbusiness/comments/1abc23/need_a_website_for_my_bakery/",
+            "javascript:alert(1)//",
+        )
+    )
+    posts = parse_feed(evil)
+    assert [p.external_id for p in posts] == ["t3_1abc24"]  # evil entry dropped
+
+
 class FakeResponse:
     def __init__(self, status_code: int, content: bytes = b"", headers: dict | None = None):
         self.status_code = status_code

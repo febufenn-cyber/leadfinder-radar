@@ -39,6 +39,21 @@ def test_format_alert_truncates_long_body():
     assert len(text) <= 4000
 
 
+def test_url_survives_pathological_escaping():
+    """html.escape expands quotes 6x — the link must never be truncated off the card."""
+    post = make_post(title='"' * 300, text='"' * 3000)
+    text = format_alert(post, "robofox_web", ["need a website"])
+    assert len(text) <= 4000
+    assert "https://www.reddit.com/r/smallbusiness/comments/1abc23/x/" in text
+
+
+def test_url_is_escaped_for_telegram_html():
+    post = make_post(url="https://news.ycombinator.com/item?id=1&ref=x")
+    text = format_alert(post, "robofox_web", ["need a website"])
+    assert "id=1&amp;ref=x" in text
+    assert "id=1&ref=x" not in text
+
+
 async def test_console_notifier_always_succeeds():
     assert await ConsoleNotifier().send("hello") is True
 

@@ -24,6 +24,14 @@ from app.packs import load_packs
 
 log = logging.getLogger(__name__)
 
+_REPO_ROOT = Path(__file__).resolve().parents[1]
+
+
+def _resolve_packs_dir(configured: str) -> Path:
+    """Relative PACKS_DIR must not depend on the process cwd — anchor it to the repo."""
+    path = Path(configured)
+    return path if path.is_absolute() else _REPO_ROOT / path
+
 
 async def run_poll_cycle(
     *,
@@ -36,8 +44,10 @@ async def run_poll_cycle(
     settings = get_settings()
     session_factory = session_factory or get_session_factory()
     notifier = notifier or get_notifier(settings)
-    packs = packs if packs is not None else load_packs(Path(settings.PACKS_DIR))
+    packs = packs if packs is not None else load_packs(_resolve_packs_dir(settings.PACKS_DIR))
     poll_fn = poll_fn or reddit_rss.poll
+    if not packs:
+        log.warning("no enabled packs loaded from %s — nothing to poll", settings.PACKS_DIR)
 
     started = time.monotonic()
     summary = {"fetched": 0, "matched": 0, "new": 0, "alerted": 0}

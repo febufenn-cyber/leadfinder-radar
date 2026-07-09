@@ -20,7 +20,10 @@ def get_session_factory() -> async_sessionmaker[AsyncSession]:
 async def insert_new_posts(session: AsyncSession, rows: list[dict]) -> list[RawPost]:
     """Insert rows, silently skipping (source, external_id) duplicates (DESIGN §3.1).
 
-    Returns only the rows that were actually new, as ORM objects.
+    Returns only the rows that were actually new, as ORM objects. Does NOT commit:
+    the caller owns the transaction, so insert + alerted_at + event rows land
+    atomically — a crash mid-cycle re-surfaces the lead next cycle instead of
+    silently losing it.
     """
     if not rows:
         return []
@@ -31,5 +34,4 @@ async def insert_new_posts(session: AsyncSession, rows: list[dict]) -> list[RawP
         .returning(RawPost)
     )
     result = await session.execute(stmt)
-    await session.commit()
     return list(result.scalars().all())

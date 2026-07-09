@@ -17,6 +17,8 @@ logging.basicConfig(
     level=get_settings().LOG_LEVEL,
     format="%(asctime)s %(levelname)s %(name)s: %(message)s",
 )
+# httpx logs full request URLs at INFO — the Telegram URL contains the bot token.
+logging.getLogger("httpx").setLevel(logging.WARNING)
 
 
 async def poll_job(ctx: dict) -> dict:
@@ -24,6 +26,12 @@ async def poll_job(ctx: dict) -> dict:
 
 
 _settings = get_settings()
+
+if 60 % _settings.POLL_INTERVAL_MINUTES:
+    raise ValueError(
+        f"POLL_INTERVAL_MINUTES={_settings.POLL_INTERVAL_MINUTES} must divide 60 evenly "
+        "or the cron minute-set produces uneven gaps"
+    )
 
 
 class WorkerSettings:

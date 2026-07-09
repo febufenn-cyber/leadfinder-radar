@@ -28,18 +28,26 @@ def _age_str(created_at: datetime) -> str:
 
 
 def format_alert(post: RawPostData, pack_name: str, matched: list[str]) -> str:
-    """Telegram-HTML alert card: pack, community, age, title, preview, keywords, link."""
+    """Telegram-HTML alert card: pack, community, age, title, preview, keywords, link.
+
+    The link is load-bearing (M0 = "raw Telegram alert with link"), so the body
+    preview gets whatever budget remains after the fixed parts — never the reverse.
+    """
     community = f"r/{post.community}" if post.community else post.source
-    preview = post.text[:_BODY_PREVIEW_CHARS]
-    lines = [
-        f"🔔 <b>[{html.escape(pack_name)}]</b> {html.escape(community)} · {_age_str(post.created_at)}",
-        f"<b>{html.escape(post.title or '(no title)')}</b>",
-    ]
-    if preview:
-        lines.append(html.escape(preview))
-    lines.append(f"matched: {html.escape(', '.join(matched))}")
-    lines.append(post.url)
-    return "\n".join(lines)[:_TELEGRAM_LIMIT]
+    header = (
+        f"🔔 <b>[{html.escape(pack_name)}]</b> {html.escape(community)}"
+        f" · {_age_str(post.created_at)}"
+    )
+    title = f"<b>{html.escape((post.title or '(no title)')[:300])}</b>"
+    footer = f"matched: {html.escape(', '.join(matched))}\n{html.escape(post.url)}"
+
+    budget = _TELEGRAM_LIMIT - len(header) - len(title) - len(footer) - 3  # newlines
+    preview = ""
+    if post.text and budget > 20:
+        preview = html.escape(post.text[:_BODY_PREVIEW_CHARS])[:budget]
+
+    lines = [header, title] + ([preview] if preview else []) + [footer]
+    return "\n".join(lines)
 
 
 class ConsoleNotifier:

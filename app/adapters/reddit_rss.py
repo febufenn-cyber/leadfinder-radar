@@ -69,6 +69,10 @@ def parse_feed(xml: bytes | str) -> list[RawPostData]:
         if not (external_id and link and published):
             log.warning("skipping malformed feed entry: id=%r link=%r", external_id, link)
             continue
+        if not link.startswith(("https://", "http://")):
+            # feed content is untrusted; never let javascript:/data: URIs reach a href
+            log.warning("skipping entry with non-http link: id=%r link=%r", external_id, link)
+            continue
         content = entry.get("content")
         body_html = content[0].get("value", "") if content else entry.get("summary", "")
         author_detail = entry.get("author_detail") or {}
@@ -137,6 +141,8 @@ async def poll(pack: OfferPack, client: httpx.AsyncClient) -> list[RawPostData]:
             log.warning("feed fetch failed url=%s err=%s", url, exc)
             continue
         _cooldown_until.pop(url, None)
-        for post in parse_feed(resp.content):
+        posts = parse_feed(resp.content)
+        log.info("feed ok entries=%d url=%s", len(posts), url)
+        for post in posts:
             seen.setdefault(post.external_id, post)
     return list(seen.values())
