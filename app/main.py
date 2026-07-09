@@ -39,11 +39,15 @@ def _row_html(p: RawPost) -> str:
     community = f"r/{p.community}" if p.community else p.source
     keywords = ", ".join(p.matched_keywords or [])
     alerted = "✅" if p.alerted_at else "—"
+    fit = str(p.fit_score) if p.fit_score is not None else ("?" if p.classified_at else "—")
+    summary = (p.score or {}).get("one_line_summary", "")
     return (
-        f"<tr><td>{age_min}m</td><td>{html.escape(p.pack)}</td>"
+        f"<tr><td>{age_min}m</td><td><b>{html.escape(fit)}</b></td>"
+        f"<td>{html.escape(p.pack)}</td>"
         f"<td>{html.escape(community)}</td>"
         f'<td><a href="{html.escape(p.url)}" target="_blank" rel="noopener">'
-        f"{html.escape(p.title or '(no title)')}</a></td>"
+        f"{html.escape(p.title or '(no title)')}</a>"
+        f"{'<br><i>' + html.escape(summary) + '</i>' if summary else ''}</td>"
         f"<td>{html.escape(keywords)}</td><td>{alerted}</td></tr>"
     )
 
@@ -66,7 +70,7 @@ async def index() -> str:
         )
 
     rows = "\n".join(_row_html(p) for p in posts) or (
-        '<tr><td colspan="6">No matched posts yet — the poller runs every 2 minutes.</td></tr>'
+        '<tr><td colspan="7">No matched posts yet — the poller runs every 2 minutes.</td></tr>'
     )
     last = last_poll.strftime("%Y-%m-%d %H:%M UTC") if last_poll else "never"
     return f"""<!doctype html>
@@ -83,7 +87,7 @@ async def index() -> str:
 <h2>LeadFinder — matched posts</h2>
 <p class="meta">last poll: {last} · newest 100 · auto-refreshes every 60s</p>
 <table>
-<tr><th>fetched</th><th>pack</th><th>community</th><th>title</th><th>matched</th><th>alerted</th></tr>
+<tr><th>fetched</th><th>fit</th><th>pack</th><th>community</th><th>title</th><th>matched</th><th>alerted</th></tr>
 {rows}
 </table>
 </body></html>"""
