@@ -1,0 +1,17 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+*.egg-info/
+.pytest_cache/
+.ruff_cache/
+
+# Secrets & local config
+.env
+
+# OS
+.DS_Store
+
+# Local data
+*.db
+logs/
