@@ -33,6 +33,15 @@ def _resolve_packs_dir(configured: str) -> Path:
     return path if path.is_absolute() else _REPO_ROOT / path
 
 
+def select_poll_fn(settings):
+    """OAuth adapter when script-app creds exist, else the RSS fallback (DESIGN §2)."""
+    if settings.REDDIT_CLIENT_ID and settings.REDDIT_CLIENT_SECRET:
+        from app.adapters.reddit_oauth import get_oauth_adapter
+
+        return get_oauth_adapter().poll
+    return reddit_rss.poll
+
+
 async def _default_classify(session, pack, row, raw_post_id):
     from app.classify import classify_post
     from app.services.claude_runner import get_runner
@@ -53,7 +62,7 @@ async def run_poll_cycle(
     session_factory = session_factory or get_session_factory()
     notifier = notifier or get_notifier(settings)
     packs = packs if packs is not None else load_packs(_resolve_packs_dir(settings.PACKS_DIR))
-    poll_fn = poll_fn or reddit_rss.poll
+    poll_fn = poll_fn or select_poll_fn(settings)
     classify_fn = classify_fn or _default_classify
     if not packs:
         log.warning("no enabled packs loaded from %s — nothing to poll", settings.PACKS_DIR)
