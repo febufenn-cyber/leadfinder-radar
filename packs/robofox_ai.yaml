@@ -1,0 +1,37 @@
+# robofox_ai — chatbots, WhatsApp automation, AI workflow/agent builds (DESIGN §1)
+# Disabled template: enable after M1 classifier lands and robofox_web precision looks sane.
+name: robofox_ai
+enabled: false
+description: Chatbots, WhatsApp automation, AI workflow/agent builds, Meta ads setup.
+
+reddit:
+  subreddits:
+    - smallbusiness
+    - Entrepreneur
+    - startups
+    - SaaS
+    - developersIndia
+    - indianstartups
+  search_queries:
+    - chatbot for my business
+    - whatsapp automation
+    - automate my business
+
+keywords:
+  include:
+    - chatbot for
+    - whatsapp automation
+    - whatsapp bot
+    - automate my
+    - ai agent for
+    - ai automation
+    - meta ads setup
+  exclude:
+    - for free
+    - no budget
+    - full-time
+    - full time job
+    - homework
+    - "[for hire]"
+
+max_age_minutes: 180

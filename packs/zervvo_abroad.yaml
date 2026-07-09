@@ -1,0 +1,35 @@
+# zervvo_abroad — study-abroad intent (DESIGN §1: possibly the highest-value pack;
+# Zervvo already has fulfillment and a WhatsApp pipeline).
+# Disabled template: enable at M3 per the milestone plan.
+name: zervvo_abroad
+enabled: false
+description: Study-abroad intent — Germany/UK/Canada, IELTS, visa counseling.
+
+reddit:
+  subreddits:
+    - studyAbroad
+    - gradadmissions
+    - Indians_StudyAbroad
+    - germany
+  search_queries:
+    - study in germany
+    - study in canada
+    - ielts coaching
+    - study abroad consultant
+
+keywords:
+  include:
+    - study in germany
+    - study in uk
+    - study in canada
+    - study abroad
+    - ielts coaching
+    - visa counseling
+    - visa consultant
+    - education consultant
+  exclude:
+    - for free
+    - homework
+    - scholarship essay
+
+max_age_minutes: 180

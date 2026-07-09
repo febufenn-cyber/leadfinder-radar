@@ -1,0 +1,46 @@
+# robofox_web — websites, landing pages, small-business web presence (DESIGN §1)
+name: robofox_web
+enabled: true
+description: Websites, landing pages, small-business web presence.
+
+reddit:
+  # DESIGN §2 target subs for robofox packs
+  subreddits:
+    - smallbusiness
+    - Entrepreneur
+    - startups
+    - SaaS
+    - developersIndia
+    - indianstartups
+    - forhire
+  # Polled via reddit search RSS (sort=new); phrases are quoted automatically
+  search_queries:
+    - need a website
+    - build me a website
+    - looking for a web developer
+    - recommend a web agency
+
+keywords:
+  include:
+    - need a website
+    - need a site
+    - build me a website
+    - build me a site
+    - make a website
+    - website for my
+    - landing page
+    - redesign my website
+    - looking for a web developer
+    - looking for a developer
+    - recommend a web agency
+    - recommend an agency
+    - web developer for
+  exclude:
+    - for free
+    - no budget
+    - full-time
+    - full time job
+    - homework
+    - "[for hire]"   # r/forhire sellers advertising themselves, not buyers
+
+max_age_minutes: 180
