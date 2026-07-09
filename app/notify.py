@@ -27,26 +27,49 @@ def _age_str(created_at: datetime) -> str:
     return f"{minutes}m ago" if minutes < 120 else f"{minutes // 60}h ago"
 
 
-def format_alert(post: RawPostData, pack_name: str, matched: list[str]) -> str:
-    """Telegram-HTML alert card: pack, community, age, title, preview, keywords, link.
+def format_alert(
+    post: RawPostData,
+    pack_name: str,
+    matched: list[str],
+    score=None,
+    unscored: bool = False,
+) -> str:
+    """Telegram-HTML alert card (scored form since M1): pack, community, age,
+    fit score, title, one-line summary, intent chips, preview, keywords, link.
 
     The link is load-bearing (M0 = "raw Telegram alert with link"), so the body
     preview gets whatever budget remains after the fixed parts — never the reverse.
+    `score` is a LeadScore-shaped object; `unscored=True` marks classifier failure.
     """
     community = f"r/{post.community}" if post.community else post.source
+    badge = ""
+    if score is not None:
+        badge = f" · ⭐ {score.fit_score}"
+    elif unscored:
+        badge = " · ⚠️ UNSCORED"
     header = (
         f"🔔 <b>[{html.escape(pack_name)}]</b> {html.escape(community)}"
-        f" · {_age_str(post.created_at)}"
+        f" · {_age_str(post.created_at)}{badge}"
     )
     title = f"<b>{html.escape((post.title or '(no title)')[:300])}</b>"
+
+    score_lines = []
+    if score is not None:
+        score_lines.append(f"<i>{html.escape(score.one_line_summary[:200])}</i>")
+        chips = f"{score.intent} · {score.urgency} · budget: {score.budget_signal}"
+        if score.disqualifiers:
+            chips += f" · ⚠️ {', '.join(score.disqualifiers)}"
+        score_lines.append(html.escape(chips))
+
     footer = f"matched: {html.escape(', '.join(matched))}\n{html.escape(post.url)}"
 
-    budget = _TELEGRAM_LIMIT - len(header) - len(title) - len(footer) - 3  # newlines
+    fixed_len = len(header) + len(title) + sum(len(s) for s in score_lines) + len(footer)
+    budget = _TELEGRAM_LIMIT - fixed_len - 6  # newlines
     preview = ""
     if post.text and budget > 20:
         preview = html.escape(post.text[:_BODY_PREVIEW_CHARS])[:budget]
 
-    lines = [header, title] + ([preview] if preview else []) + [footer]
+    lines = [header, title, *score_lines] + ([preview] if preview else []) + [footer]
     return "\n".join(lines)
 
 

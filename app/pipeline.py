@@ -33,12 +33,20 @@ def _resolve_packs_dir(configured: str) -> Path:
     return path if path.is_absolute() else _REPO_ROOT / path
 
 
+async def _default_classify(session, pack, row, raw_post_id):
+    from app.classify import classify_post
+    from app.services.claude_runner import get_runner
+
+    return await classify_post(get_runner(), session, pack, row, raw_post_id=raw_post_id)
+
+
 async def run_poll_cycle(
     *,
     session_factory=None,
     notifier=None,
     packs=None,
     poll_fn=None,
+    classify_fn=None,
 ) -> dict:
     """Poll every enabled pack once. Returns summary counts."""
     settings = get_settings()
@@ -46,11 +54,15 @@ async def run_poll_cycle(
     notifier = notifier or get_notifier(settings)
     packs = packs if packs is not None else load_packs(_resolve_packs_dir(settings.PACKS_DIR))
     poll_fn = poll_fn or reddit_rss.poll
+    classify_fn = classify_fn or _default_classify
     if not packs:
         log.warning("no enabled packs loaded from %s — nothing to poll", settings.PACKS_DIR)
 
     started = time.monotonic()
-    summary = {"fetched": 0, "matched": 0, "new": 0, "alerted": 0}
+    summary = {
+        "fetched": 0, "matched": 0, "new": 0,
+        "classified": 0, "surfaced": 0, "suppressed": 0, "alerted": 0,
+    }
 
     async with httpx.AsyncClient(
         headers={"User-Agent": settings.REDDIT_USER_AGENT},
@@ -79,7 +91,32 @@ async def run_poll_cycle(
                 new_posts = await insert_new_posts(session, rows)
                 summary["new"] += len(new_posts)
                 for np in new_posts:
-                    if await notifier.send(format_alert(np, pack.name, np.matched_keywords)):
+                    # classify + score, tier fast (DESIGN §3.3); dupes never get here
+                    row = {
+                        "community": np.community,
+                        "author_handle": np.author_handle,
+                        "title": np.title,
+                        "text": np.text,
+                    }
+                    score = await classify_fn(session, pack, row, np.id)
+                    np.classified_at = datetime.now(UTC)
+                    if score is not None:
+                        summary["classified"] += 1
+                        np.fit_score = score.fit_score
+                        np.score = score.model_dump()
+
+                    # threshold gate: sub-threshold is stored, not surfaced;
+                    # classifier failure surfaces UNSCORED (don't lose leads)
+                    if score is not None and score.fit_score < pack.threshold:
+                        summary["suppressed"] += 1
+                        continue
+                    summary["surfaced"] += 1
+
+                    card = format_alert(
+                        np, pack.name, np.matched_keywords,
+                        score=score, unscored=score is None,
+                    )
+                    if await notifier.send(card):
                         np.alerted_at = datetime.now(UTC)
                         summary["alerted"] += 1
                         session.add(
