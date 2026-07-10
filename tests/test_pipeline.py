@@ -9,7 +9,7 @@ from app.classify import LeadScore
 from app.models.event import Event
 from app.models.raw_post import RawPost
 from app.packs import OfferPack
-from app.pipeline import run_poll_cycle
+from app.pipeline import ClassifierBreaker, run_poll_cycle
 from tests.test_notify import make_post
 
 PACK = OfferPack(
@@ -40,6 +40,19 @@ class SpyClassifier:
     async def __call__(self, session, pack, row, raw_post_id):
         self.calls += 1
         return self.score
+
+
+class FlakyClassifier:
+    """Returns None until `recover_after` calls, then succeeds."""
+
+    def __init__(self, recover_after: int, score: LeadScore):
+        self.recover_after = recover_after
+        self.score = score
+        self.calls = 0
+
+    async def __call__(self, session, pack, row, raw_post_id):
+        self.calls += 1
+        return self.score if self.calls > self.recover_after else None
 
 
 class SpyNotifier:
@@ -130,6 +143,7 @@ async def test_classifier_failure_alerts_unscored(db_factory):
         packs=[PACK],
         poll_fn=fake_poll(sample_posts()),
         classify_fn=SpyClassifier(None),
+        breaker=ClassifierBreaker(),  # isolate from the module singleton
     )
     assert summary["alerted"] == 1  # over-alerting beats losing a lead
     assert "UNSCORED" in notifier.sent[0]
@@ -171,3 +185,80 @@ async def test_failed_alert_keeps_post_unalerted(db_factory):
         assert post.alerted_at is None
         kinds = set((await session.execute(select(Event.kind))).scalars().all())
         assert "alert_failed" in kinds
+
+
+def many_matching_posts(n: int):
+    return [make_post(external_id=f"t3_burst{i}") for i in range(n)]
+
+
+async def test_breaker_opens_after_three_failures_and_stops_alert_spam(db_factory):
+    notifier = SpyNotifier()
+    breaker = ClassifierBreaker(threshold=3)
+    summary = await run_poll_cycle(
+        session_factory=db_factory,
+        notifier=notifier,
+        packs=[PACK],
+        poll_fn=fake_poll(many_matching_posts(6)),
+        classify_fn=SpyClassifier(None),
+        breaker=breaker,
+    )
+    assert breaker.is_open()
+    # posts 1-2: sporadic UNSCORED alerts; post 3 trips the breaker (down notice);
+    # posts 4-6 deferred silently
+    unscored = [t for t in notifier.sent if "UNSCORED" in t]
+    notices = [t for t in notifier.sent if "classifier appears down" in t]
+    assert len(unscored) == 2
+    assert len(notices) == 1
+    assert summary["deferred"] == 4
+    async with db_factory() as session:
+        kinds = (await session.execute(select(Event.kind))).scalars().all()
+        assert kinds.count("classifier_breaker_open") == 1
+
+
+async def test_open_breaker_probes_once_per_cycle(db_factory):
+    notifier = SpyNotifier()
+    breaker = ClassifierBreaker(threshold=1)
+    classifier = SpyClassifier(None)
+    await run_poll_cycle(
+        session_factory=db_factory, notifier=notifier, packs=[PACK],
+        poll_fn=fake_poll(many_matching_posts(3)), classify_fn=classifier, breaker=breaker,
+    )
+    assert classifier.calls == 1  # first call opened it; rest deferred
+    await run_poll_cycle(
+        session_factory=db_factory, notifier=notifier, packs=[PACK],
+        poll_fn=fake_poll([]), classify_fn=classifier, breaker=breaker,
+    )
+    assert classifier.calls == 2  # exactly one probe on the stored backlog
+
+
+async def test_recovery_drains_backlog(db_factory):
+    notifier = SpyNotifier()
+    breaker = ClassifierBreaker(threshold=1)
+    classifier = FlakyClassifier(recover_after=1, score=make_score(82))
+    posts = many_matching_posts(4)
+    # cycle 1: first classify fails -> breaker opens, all 4 stored unclassified
+    s1 = await run_poll_cycle(
+        session_factory=db_factory, notifier=notifier, packs=[PACK],
+        poll_fn=fake_poll(posts), classify_fn=classifier, breaker=breaker,
+    )
+    assert s1["deferred"] == 4 and s1["alerted"] == 0
+    # cycle 2: probe succeeds (breaker closes), probe post alerted
+    s2 = await run_poll_cycle(
+        session_factory=db_factory, notifier=notifier, packs=[PACK],
+        poll_fn=fake_poll(posts), classify_fn=classifier, breaker=breaker,
+    )
+    assert not breaker.is_open()
+    assert s2["alerted"] == 1
+    # cycle 3: breaker closed -> backlog drains fully
+    s3 = await run_poll_cycle(
+        session_factory=db_factory, notifier=notifier, packs=[PACK],
+        poll_fn=fake_poll([]), classify_fn=classifier, breaker=breaker,
+    )
+    assert s3["classified"] == 3 and s3["alerted"] == 3
+    async with db_factory() as session:
+        remaining = (
+            await session.execute(select(RawPost).where(RawPost.classified_at.is_(None)))
+        ).scalars().all()
+        assert remaining == []
+        kinds = set((await session.execute(select(Event.kind))).scalars().all())
+        assert "classifier_breaker_closed" in kinds

@@ -28,15 +28,16 @@ import time
 from decimal import Decimal
 from pathlib import Path
 
-from sqlalchemy.ext.asyncio import AsyncSession
-
 from app.core.config import get_settings
+from app.db.session import get_session_factory
 from app.models.llm_call import LlmCall
 
 log = logging.getLogger(__name__)
 
 _EMPTY_MCP_CONFIG = str(Path(__file__).parent / "empty_mcp_config.json")
 _FENCE_RE = re.compile(r"^```[a-zA-Z]*\s*|\s*```$")
+# CLI stderr can theoretically echo credentials on auth failures — scrub before storing.
+_SECRET_RE = re.compile(r"(sk-ant-[A-Za-z0-9_\-]{8,}|Bearer\s+\S+)")
 
 
 def _extract_json(text: str) -> dict | None:
@@ -74,6 +75,10 @@ class ClaudeRunner:
             "fast": settings.CLAUDE_FAST_MODEL,
             "standard": settings.CLAUDE_STANDARD_MODEL,
         }
+        # The audit row commits in its OWN session so token spend survives any
+        # rollback of the caller's transaction (worker kill mid-batch, etc.).
+        # Tests override with the test-db factory.
+        self.audit_factory = None
 
     async def _run_cli(self, args: list[str], timeout: int) -> tuple[int, bytes, bytes]:
         """Subprocess boundary — overridden in tests."""
@@ -98,28 +103,31 @@ class ClaudeRunner:
         system_prompt: str,
         user_prompt: str,
         tier: str,
-        session: AsyncSession,
         raw_post_id: int | None = None,
         timeout: int | None = None,
     ) -> dict | None:
         """One completion expected to return a JSON object. Never raises.
 
-        Adds an LlmCall row to `session` (caller commits). Returns the parsed
-        payload dict, or None on any failure (details in the audit row + log).
+        Commits an LlmCall audit row in its own session (success or failure).
+        Returns the parsed payload dict, or None on any failure (details in
+        the audit row + log).
         """
-        settings = get_settings()
-        model = self._models[tier]
-        timeout = timeout or settings.CLASSIFY_TIMEOUT_SECONDS
-
-        fd, sys_file = tempfile.mkstemp(suffix=".txt", prefix="leadfinder_sysprompt_")
-        with os.fdopen(fd, "w", encoding="utf-8") as f:
-            f.write(system_prompt)
-
         started = time.monotonic()
+        model = self._models.get(tier, f"unknown:{tier}")
         payload = usage = None
         cost = None
         error = None
+        sys_file = None
         try:
+            settings = get_settings()
+            timeout = timeout or settings.CLASSIFY_TIMEOUT_SECONDS
+            if tier not in self._models:
+                raise ValueError(f"unknown tier {tier!r}")
+
+            fd, sys_file = tempfile.mkstemp(suffix=".txt", prefix="leadfinder_sysprompt_")
+            with os.fdopen(fd, "w", encoding="utf-8") as f:
+                f.write(system_prompt)
+
             args = [
                 self.cli_path, "-p",
                 "--model", model,
@@ -156,27 +164,35 @@ class ClaudeRunner:
         except Exception as exc:  # audit row must survive anything
             error = f"runner exception: {exc!r}"
         finally:
-            try:
-                os.unlink(sys_file)
-            except OSError:
-                pass
+            if sys_file is not None:
+                try:
+                    os.unlink(sys_file)
+                except OSError:
+                    pass
 
         usage = usage or {}
-        session.add(
-            LlmCall(
-                purpose=purpose,
-                tier=tier,
-                model=model,
-                input_tokens=int(usage.get("input_tokens", 0) or 0),
-                output_tokens=int(usage.get("output_tokens", 0) or 0),
-                cached_input_tokens=int(usage.get("cache_read_input_tokens", 0) or 0),
-                cost_usd=cost,
-                duration_ms=int((time.monotonic() - started) * 1000),
-                success=payload is not None,
-                error=error,
-                raw_post_id=raw_post_id,
-            )
+        if error:
+            error = _SECRET_RE.sub("[redacted]", error)
+        call_row = LlmCall(
+            purpose=purpose,
+            tier=tier,
+            model=model,
+            input_tokens=int(usage.get("input_tokens", 0) or 0),
+            output_tokens=int(usage.get("output_tokens", 0) or 0),
+            cached_input_tokens=int(usage.get("cache_read_input_tokens", 0) or 0),
+            cost_usd=cost,
+            duration_ms=int((time.monotonic() - started) * 1000),
+            success=payload is not None,
+            error=error,
+            raw_post_id=raw_post_id,
         )
+        try:
+            factory = self.audit_factory or get_session_factory()
+            async with factory() as audit_session:
+                audit_session.add(call_row)
+                await audit_session.commit()
+        except Exception:
+            log.exception("failed to write llm_calls audit row (purpose=%s)", purpose)
         if error:
             log.warning("llm call failed purpose=%s tier=%s: %s", purpose, tier, error)
         return payload

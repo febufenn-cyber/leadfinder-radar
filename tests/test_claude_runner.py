@@ -33,17 +33,22 @@ def ok_event(result_text: str) -> dict:
     }
 
 
-async def test_success_parses_fenced_json_and_records_call(db_session):
+async def get_only_call(db_factory) -> LlmCall:
+    async with db_factory() as session:
+        return (await session.execute(select(LlmCall))).scalars().one()
+
+
+async def test_success_parses_fenced_json_and_records_call(db_factory):
     runner = FakeRunner(result_event=ok_event('```json\n{"fit_score": 82}\n```'))
+    runner.audit_factory = db_factory
     payload = await runner.run_json(
         purpose="classify",
         system_prompt="you are a classifier",
         user_prompt="classify this",
         tier="fast",
-        session=db_session,
     )
     assert payload == {"fit_score": 82}
-    call = (await db_session.execute(select(LlmCall))).scalars().one()
+    call = await get_only_call(db_factory)
     assert call.success is True
     assert call.purpose == "classify"
     assert call.input_tokens == 100 and call.output_tokens == 20
@@ -53,35 +58,55 @@ async def test_success_parses_fenced_json_and_records_call(db_session):
     assert "--no-session-persistence" in runner.seen_args
 
 
-async def test_cli_failure_returns_none_and_records_failure(db_session):
+async def test_cli_failure_returns_none_and_records_failure(db_factory):
     runner = FakeRunner(rc=1, stderr=b"boom")
+    runner.audit_factory = db_factory
     payload = await runner.run_json(
-        purpose="classify",
-        system_prompt="s",
-        user_prompt="u",
-        tier="fast",
-        session=db_session,
+        purpose="classify", system_prompt="s", user_prompt="u", tier="fast"
     )
     assert payload is None
-    call = (await db_session.execute(select(LlmCall))).scalars().one()
+    call = await get_only_call(db_factory)
     assert call.success is False
     assert "rc=1" in call.error
 
 
-async def test_unparseable_payload_returns_none_but_keeps_usage(db_session):
+async def test_unparseable_payload_returns_none_but_keeps_usage(db_factory):
     runner = FakeRunner(result_event=ok_event("sorry, I cannot produce JSON"))
+    runner.audit_factory = db_factory
     payload = await runner.run_json(
-        purpose="classify", system_prompt="s", user_prompt="u", tier="fast", session=db_session
+        purpose="classify", system_prompt="s", user_prompt="u", tier="fast"
     )
     assert payload is None
-    call = (await db_session.execute(select(LlmCall))).scalars().one()
+    call = await get_only_call(db_factory)
     assert call.success is False
     assert call.input_tokens == 100  # usage still audited
 
 
-async def test_json_extracted_from_prose_wrapper(db_session):
+async def test_json_extracted_from_prose_wrapper(db_factory):
     runner = FakeRunner(result_event=ok_event('Here you go:\n{"a": 1}\nHope that helps!'))
+    runner.audit_factory = db_factory
     payload = await runner.run_json(
-        purpose="classify", system_prompt="s", user_prompt="u", tier="fast", session=db_session
+        purpose="classify", system_prompt="s", user_prompt="u", tier="fast"
     )
     assert payload == {"a": 1}
+
+
+async def test_stderr_secrets_scrubbed_from_error(db_factory):
+    runner = FakeRunner(rc=1, stderr=b"auth failed: Bearer sk-ant-abc123xyz789 rejected")
+    runner.audit_factory = db_factory
+    await runner.run_json(purpose="classify", system_prompt="s", user_prompt="u", tier="fast")
+    call = await get_only_call(db_factory)
+    assert "sk-ant-" not in call.error
+    assert "[redacted]" in call.error
+
+
+async def test_audit_row_survives_pre_try_failures(db_factory):
+    runner = FakeRunner()
+    runner.audit_factory = db_factory
+    payload = await runner.run_json(
+        purpose="classify", system_prompt="s", user_prompt="u", tier="no_such_tier"
+    )
+    assert payload is None
+    call = await get_only_call(db_factory)
+    assert call.success is False
+    assert "unknown tier" in call.error

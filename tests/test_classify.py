@@ -91,4 +91,24 @@ def test_pack_threshold_default():
     assert PACK.threshold == 65
 
 
+async def test_classify_writes_llm_call_row_end_to_end(db_factory, db_session):
+    """DoD: every LLM call logged — through the REAL run_json, not a stubbed one."""
+    import json as _json
+
+    from app.models.llm_call import LlmCall
+    from sqlalchemy import select
+    from tests.test_claude_runner import FakeRunner, ok_event
+
+    runner = FakeRunner(result_event=ok_event(_json.dumps(GOOD_SCORE)))
+    runner.audit_factory = db_factory
+    score = await classify_post(runner, db_session, PACK, make_post_row(), raw_post_id=7)
+    assert score is not None and score.fit_score == 82
+    async with db_factory() as session:
+        call = (await session.execute(select(LlmCall))).scalars().one()
+        assert call.purpose == "classify"
+        assert call.tier == "fast"
+        assert call.raw_post_id == 7
+        assert call.success is True
+
+
 PACKS_DIR = Path(__file__).resolve().parent.parent / "packs"
