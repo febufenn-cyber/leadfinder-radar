@@ -1,5 +1,11 @@
 # LeadFinder M3 Implementation Plan
 
+> **Status: BUILT 2026-07-10.** Tasks 1-7 executed and committed; 93 tests green.
+> Live-verified: real Algolia HN poll (56 stories parsed). Threads adapter awaits
+> the owner's Meta-app token. Task 8 (fleet review of M2+M3) queued for when the
+> Max usage window allows — M2 got a Fable advisor self-review in the meantime
+> (two real bugs found and fixed: card-slice 400-loop, bot None-message crash).
+
 > **For agentic workers:** REQUIRED SUB-SKILL: superpowers:executing-plans (inline, same session as author). Each task commits.
 
 **Goal:** M3 per DESIGN §7 — Threads API adapter (official API only, keyword-search quota budgeter), HN adapter (Algolia, no auth), zervvo_abroad pack enabled.
