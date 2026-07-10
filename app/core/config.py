@@ -47,6 +47,25 @@ class Settings(BaseSettings):
     THREADS_DAILY_QUERY_BUDGET: int = 48
     THREADS_MIN_INTERVAL_MINUTES: int = 15
 
+    # ---- API-send guardrails (M4; DESIGN §3.7 — enforced in code, not prompts) ----
+    SEND_MODE: Literal["copy", "api"] = "copy"
+    OWNER_TZ: str = "Asia/Kolkata"
+    QUIET_HOURS_START: int = 23  # owner-local
+    QUIET_HOURS_END: int = 7
+    CAP_REDDIT_COMMENTS_PER_DAY: int = 8
+    CAP_THREADS_REPLIES_PER_DAY: int = 5
+    CAP_DMS_PER_DAY: int = 3  # across platforms
+    JITTER_MIN_MINUTES: int = 2
+    JITTER_MAX_MINUTES: int = 9
+    WATCH_INTERVAL_MINUTES: int = 5
+
+    # ---- Reddit user auth (script-app password grant; needed for api-send + watch) ----
+    REDDIT_USERNAME: str = ""
+    REDDIT_PASSWORD: str = ""
+
+    # ---- HubSpot (empty -> sync disabled) ----
+    HUBSPOT_ACCESS_TOKEN: str = ""
+
     # ---- Claude (CLI subprocess on Max OAuth; DESIGN §4 auth note) ----
     CLAUDE_CLI_PATH: str = "claude"
     CLAUDE_FAST_MODEL: str = "claude-haiku-4-5-20251001"
