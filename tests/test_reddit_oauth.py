@@ -7,7 +7,7 @@ from pathlib import Path
 from app.adapters.reddit_oauth import RedditOAuth, parse_listing
 from app.core.config import Settings
 from app.packs import OfferPack
-from app.pipeline import select_poll_fn
+from app.pipeline import _reddit_poll_fn, select_poll_fn
 
 FIXTURES = Path(__file__).resolve().parent / "fixtures"
 
@@ -91,8 +91,40 @@ async def test_token_cached_until_expiry(monkeypatch):
     assert client.token_fetches == 2  # refreshed
 
 
-def test_select_poll_fn_prefers_oauth_when_creds_present():
+def test_reddit_poll_fn_prefers_oauth_when_creds_present():
     with_creds = Settings(REDDIT_CLIENT_ID="cid", REDDIT_CLIENT_SECRET="sec", _env_file=None)
     without = Settings(REDDIT_CLIENT_ID="", REDDIT_CLIENT_SECRET="", _env_file=None)
-    assert select_poll_fn(with_creds).__qualname__.startswith("RedditOAuth")
-    assert select_poll_fn(without).__module__ == "app.adapters.reddit_rss"
+    assert _reddit_poll_fn(with_creds).__qualname__.startswith("RedditOAuth")
+    assert _reddit_poll_fn(without).__module__ == "app.adapters.reddit_rss"
+
+
+async def test_composite_poll_merges_sources(monkeypatch):
+    from app.adapters import hn
+    from app.adapters.reddit_rss import RawPostData
+    from datetime import UTC, datetime
+
+    def fake_source(source, external_id):
+        return RawPostData(
+            source=source, external_id=external_id, url="https://x/",
+            author_handle=None, author_url=None, community=None, title="t",
+            text="", created_at=datetime.now(UTC),
+        )
+
+    async def fake_reddit(pack, client):
+        return [fake_source("reddit", "r1")]
+
+    async def fake_hn(pack, client):
+        return [fake_source("hn", "h1")]
+
+    monkeypatch.setattr("app.pipeline._reddit_poll_fn", lambda s: fake_reddit)
+    monkeypatch.setattr(hn, "poll", fake_hn)
+    settings = Settings(THREADS_ACCESS_TOKEN="", _env_file=None)
+    pack = OfferPack(
+        name="x",
+        reddit={"subreddits": ["a"]},
+        hn={"search_queries": ["q"]},
+        threads={"search_queries": ["q"]},  # no token -> must NOT be polled
+        keywords={"include": ["k"]},
+    )
+    posts = await select_poll_fn(settings)(pack, client=None)
+    assert {p.source for p in posts} == {"reddit", "hn"}

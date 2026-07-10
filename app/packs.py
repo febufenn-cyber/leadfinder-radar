@@ -22,11 +22,17 @@ class RedditConfig(BaseModel):
     search_queries: list[str] = []
 
 
+class SourceQueries(BaseModel):
+    search_queries: list[str] = []
+
+
 class OfferPack(BaseModel):
     name: str
     enabled: bool = True
     description: str = ""
     reddit: RedditConfig = RedditConfig()
+    hn: SourceQueries = SourceQueries()
+    threads: SourceQueries = SourceQueries()
     keywords: PackKeywords
     max_age_minutes: int = 180  # DESIGN §3.1: stale threads convert poorly
     threshold: int = 65  # DESIGN §3.3: min fit_score to surface; below is stored only

@@ -1,0 +1,22 @@
+{
+  "hits": [
+    {
+      "objectID": "41999001",
+      "title": "Ask HN: Can anyone recommend an agency for a small marketing site?",
+      "url": null,
+      "story_text": "<p>Bootstrapped founder here. Need a website for my SaaS &#x2014; 5 pages, fast, nothing fancy. Budget ~$2k.</p>",
+      "author": "founder123",
+      "created_at_i": 1783978200,
+      "_tags": ["story", "author_founder123", "story_41999001"]
+    },
+    {
+      "objectID": "41999002",
+      "title": "Show HN: I built a website builder",
+      "url": "https://example.com/builder",
+      "story_text": null,
+      "author": "builderguy",
+      "created_at_i": 1783978100,
+      "_tags": ["story", "show_hn"]
+    }
+  ]
+}

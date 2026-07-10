@@ -1,0 +1,12 @@
+# Persona block for zervvo_abroad drafts (DESIGN §3.5).
+#
+# ⚠️ OWNER ACTION REQUIRED: fill `facts` with TRUE, owner-written statements only.
+# With an empty list, drafts make ZERO claims about Zervvo — pure helpful-first
+# replies. Never invent track record.
+#
+# Examples of good facts (write your own, only if true):
+#   - "I run Zervvo, a study-abroad consultancy working with Indian students."
+#   - "We handle Germany/UK/Canada applications end-to-end including visa filing."
+facts: []
+
+availability_line: ""

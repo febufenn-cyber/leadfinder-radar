@@ -1,0 +1,83 @@
+# Few-shot examples for the zervvo_abroad classifier (DESIGN §3.3).
+#
+# ⚠️ STARTER SET — replace/extend with ~10 real positives and ~10 near-miss
+# negatives from the actual Threads/Reddit examples you've collected. This
+# pack's precision matters most: it's the highest-value funnel.
+examples:
+  - label: positive
+    text: "Final year BCom student, want to study in Germany for my masters. Totally confused about uni-assist and APS. Is it worth paying a consultant?"
+    score:
+      is_demand_post: true
+      offer_pack: zervvo_abroad
+      intent: recommendation_ask
+      buyer_type: student
+      budget_signal: implied
+      urgency: soon
+      disqualifiers: []
+      fit_score: 78
+      one_line_summary: "BCom finalist wants Germany masters guidance, weighing paid consulting"
+
+  - label: positive
+    text: "Need IELTS coaching in Chennai, exam in 2 months. Online is also fine. Suggestions?"
+    score:
+      is_demand_post: true
+      offer_pack: zervvo_abroad
+      intent: explicit_request
+      buyer_type: individual
+      budget_signal: implied
+      urgency: now
+      disqualifiers: []
+      fit_score: 74
+      one_line_summary: "Chennai IELTS aspirant with a 2-month deadline seeking coaching"
+
+  - label: positive
+    text: "My daughter got admits from UK and Canada. So lost about which visa process to start and what the real costs are. Who can guide us properly?"
+    score:
+      is_demand_post: true
+      offer_pack: zervvo_abroad
+      intent: explicit_request
+      buyer_type: individual
+      budget_signal: implied
+      urgency: now
+      disqualifiers: []
+      fit_score: 82
+      one_line_summary: "Parent with UK/Canada admits in hand needs visa + cost guidance"
+
+  - label: near_miss
+    text: "AMA: I'm a study abroad consultant with 10 years experience. Ask me anything about Germany!"
+    score:
+      is_demand_post: false
+      offer_pack: zervvo_abroad
+      intent: problem_statement
+      buyer_type: unclear
+      budget_signal: none
+      urgency: exploring
+      disqualifiers: [agency_seeking_leads]
+      fit_score: 3
+      one_line_summary: "Consultant self-promoting, not a prospect"
+
+  - label: near_miss
+    text: "Is there any fully free way to apply to German universities without any consultant? Zero budget."
+    score:
+      is_demand_post: true
+      offer_pack: zervvo_abroad
+      intent: explicit_request
+      buyer_type: student
+      budget_signal: none
+      urgency: exploring
+      disqualifiers: [wants_free]
+      fit_score: 15
+      one_line_summary: "DIY applicant explicitly avoiding paid consulting"
+
+  - label: near_miss
+    text: "Write my SOP for me? It's homework for my counseling class lol"
+    score:
+      is_demand_post: false
+      offer_pack: zervvo_abroad
+      intent: explicit_request
+      buyer_type: student
+      budget_signal: none
+      urgency: exploring
+      disqualifiers: [wants_free]
+      fit_score: 5
+      one_line_summary: "Homework request, not study-abroad demand"

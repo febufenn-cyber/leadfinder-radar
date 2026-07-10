@@ -60,6 +60,14 @@ positives + ~10 near-misses).
    `https://api.telegram.org/bot<TOKEN>/getUpdates` and copy
    `result[].message.chat.id` into `TELEGRAM_CHAT_ID`.
 
+## Sources (M3)
+
+Reddit (OAuth or RSS fallback, 2-min cadence) + Hacker News (Algolia, no auth,
+2-min cadence) + Threads (**official API only** — set `THREADS_ACCESS_TOKEN`
+from your Meta app; polling is budgeted: max `THREADS_DAILY_QUERY_BUDGET`
+keyword-searches/day, ≥`THREADS_MIN_INTERVAL_MINUTES` between polls, ledger in
+the events table so restarts can't double-spend the quota).
+
 ## Offer packs
 
 `packs/*.yaml` — each pack owns subreddits, search queries, include/exclude keywords,

@@ -42,6 +42,11 @@ class Settings(BaseSettings):
     REDDIT_CLIENT_ID: str = ""
     REDDIT_CLIENT_SECRET: str = ""
 
+    # ---- Threads official API (empty token -> adapter disabled) ----
+    THREADS_ACCESS_TOKEN: str = ""
+    THREADS_DAILY_QUERY_BUDGET: int = 48
+    THREADS_MIN_INTERVAL_MINUTES: int = 15
+
     # ---- Claude (CLI subprocess on Max OAuth; DESIGN §4 auth note) ----
     CLAUDE_CLI_PATH: str = "claude"
     CLAUDE_FAST_MODEL: str = "claude-haiku-4-5-20251001"

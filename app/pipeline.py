@@ -89,13 +89,41 @@ async def _fetch_backlog(session, pack_name: str, limit: int):
     return list(result.scalars().all())
 
 
-def select_poll_fn(settings):
+def _reddit_poll_fn(settings):
     """OAuth adapter when script-app creds exist, else the RSS fallback (DESIGN §2)."""
     if settings.REDDIT_CLIENT_ID and settings.REDDIT_CLIENT_SECRET:
         from app.adapters.reddit_oauth import get_oauth_adapter
 
         return get_oauth_adapter().poll
     return reddit_rss.poll
+
+
+def select_poll_fn(settings):
+    """Compose all configured sources per pack (M3): reddit + hn + threads.
+
+    Threads only participates when a token exists; its adapter additionally
+    enforces the daily query budget + min interval internally.
+    """
+    reddit_poll = _reddit_poll_fn(settings)
+    threads_adapter = None
+    if settings.THREADS_ACCESS_TOKEN:
+        from app.adapters.threads import get_threads_adapter
+
+        threads_adapter = get_threads_adapter()
+
+    async def poll_all(pack, client):
+        from app.adapters import hn
+
+        posts = []
+        if pack.reddit.subreddits or pack.reddit.search_queries:
+            posts += await reddit_poll(pack, client)
+        if pack.hn.search_queries:
+            posts += await hn.poll(pack, client)
+        if threads_adapter and pack.threads.search_queries:
+            posts += await threads_adapter.poll(pack, client)
+        return posts
+
+    return poll_all
 
 
 async def _default_classify(session, pack, row, raw_post_id):

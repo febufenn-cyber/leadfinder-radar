@@ -1,8 +1,7 @@
 # zervvo_abroad — study-abroad intent (DESIGN §1: possibly the highest-value pack;
-# Zervvo already has fulfillment and a WhatsApp pipeline).
-# Disabled template: enable at M3 per the milestone plan.
+# Zervvo already has fulfillment and a WhatsApp pipeline). Enabled at M3.
 name: zervvo_abroad
-enabled: false
+enabled: true
 description: Study-abroad intent — Germany/UK/Canada, IELTS, visa counseling.
 
 reddit:
@@ -14,6 +13,15 @@ reddit:
   search_queries:
     - study in germany
     - study in canada
+    - ielts coaching
+    - study abroad consultant
+
+# Threads keyword search (official API; polled on the budgeted 15-min cadence
+# once THREADS_ACCESS_TOKEN is set — the owner's collected demand examples
+# came from Threads, so this is the pack's primary channel)
+threads:
+  search_queries:
+    - study in germany
     - ielts coaching
     - study abroad consultant
 
@@ -33,3 +41,9 @@ keywords:
     - scholarship essay
 
 max_age_minutes: 180
+
+community_rules:
+  studyAbroad: "No agency promotion in comments. Helpful-first only; DM if the post invites contact."
+  gradadmissions: "Strictly no service promotion. Purely helpful replies only."
+  Indians_StudyAbroad: "Helpful-first; soft availability line tolerated on explicit asks."
+  germany: "No promotion. Factual visa/uni answers only."

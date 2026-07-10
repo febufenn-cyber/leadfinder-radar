@@ -20,6 +20,12 @@ reddit:
     - looking for a web developer
     - recommend a web agency
 
+# Algolia HN search (DESIGN §2: "Ask HN: recommend…" dev-service demand)
+hn:
+  search_queries:
+    - need a website
+    - recommend an agency website
+
 keywords:
   include:
     - need a website
