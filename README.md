@@ -44,9 +44,9 @@ uv run python -m app.bot                     # approval bot (needs TELEGRAM_* se
 
 A surfaced lead (fit ≥ pack threshold) is drafted by Sonnet into 2–3 variants and
 lands on your phone as a card with buttons: `Send A/B/C · Edit · Skip · Mute keyword ·
-Mute community`. **Send returns the text + thread link for you to copy and post
-manually from your own account** — nothing is ever posted automatically (API-send
-with guardrails is M4). Edits you make become gold samples for prompt tuning.
+Mute community`. **In the default `SEND_MODE=copy`, Send returns the text + thread
+link for you to copy and post manually from your own account** — nothing is posted
+automatically. Edits you make become gold samples for prompt tuning.
 
 Before working real leads, fill in the owner-truth files (drafts stay claim-free
 until you do): `packs/personas/robofox_web.yaml` (true facts only) and
@@ -67,6 +67,27 @@ Reddit (OAuth or RSS fallback, 2-min cadence) + Hacker News (Algolia, no auth,
 from your Meta app; polling is budgeted: max `THREADS_DAILY_QUERY_BUDGET`
 keyword-searches/day, ≥`THREADS_MIN_INTERVAL_MINUTES` between polls, ledger in
 the events table so restarts can't double-spend the quota).
+
+## API-send (M4, opt-in: `SEND_MODE=api`)
+
+Same per-item approval gate, but `Send A/B/C` queues the reply to be posted from
+**your own accounts** after a 2–9 min jitter (the Cancel button works until it
+posts). Guardrails are re-checked at execution time, in code: active halt >
+quiet hours (23:00–07:00 `OWNER_TZ`) > daily caps (8 reddit comments / 5 threads
+replies / 3 DMs) > one send per community per day. Combo (`comment+dm`) variants
+and HN leads stay copy-mode.
+
+Setup per platform:
+- **Reddit**: your existing script app + `REDDIT_USERNAME` / `REDDIT_PASSWORD`
+  (password grant posts as you; with 2FA use `password:123456` or an app password).
+- **Threads**: the M3 token also needs the `threads_manage_replies` permission.
+- **HubSpot** (optional): private-app token in `HUBSPOT_ACCESS_TOKEN` — replied
+  leads sync as contact + note.
+
+The watcher (every `WATCH_INTERVAL_MINUTES`) detects replies to your posted
+sends (lead → `replied`, 🎉 alert, HubSpot sync) and **auto-halts the platform
+if a mod removes one of your comments**. Halts persist until you clear them:
+`uv run python scripts/clear_halt.py`. Send history: dashboard `/sends`.
 
 ## Offer packs
 
