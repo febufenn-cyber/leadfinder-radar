@@ -44,3 +44,10 @@ keywords:
     - "[for hire]"   # r/forhire sellers advertising themselves, not buyers
 
 max_age_minutes: 180
+
+# Per-community notes the drafter must respect (DESIGN §3.5). Communities not
+# listed get the conservative default: assume self-promotion is NOT allowed.
+community_rules:
+  forhire: "Replying to [Hiring] posts with an offer is the norm here; a direct pitch is acceptable."
+  smallbusiness: "No self-promotion in comments. Helpful-first only; pitch belongs in DM if invited."
+  Entrepreneur: "No self-promotion in comments. Helpful-first only."

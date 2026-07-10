@@ -1,0 +1,15 @@
+# Persona block for robofox_web drafts (DESIGN §3.5).
+#
+# ⚠️ OWNER ACTION REQUIRED: fill `facts` with TRUE, owner-written statements only.
+# The drafting prompt is forbidden from claiming anything not listed here —
+# with an empty list, drafts make ZERO claims about you or your business
+# (pure helpful-first replies). Never invent track record.
+#
+# Examples of good facts (write your own, only if true):
+#   - "I run Robofox, a small web studio based in Madurai, India."
+#   - "We build small-business sites and landing pages, usually delivered in 1-2 weeks."
+facts: []
+
+# Optional one-line availability note appended ONLY where community rules allow
+# a soft pitch (empty = never pitch).
+availability_line: ""

@@ -30,6 +30,9 @@ class OfferPack(BaseModel):
     keywords: PackKeywords
     max_age_minutes: int = 180  # DESIGN §3.1: stale threads convert poorly
     threshold: int = 65  # DESIGN §3.3: min fit_score to surface; below is stored only
+    # Per-community self-promotion notes (DESIGN §3.5 rules_note / §5). Missing
+    # community -> the conservative default applies (assume no promo allowed).
+    community_rules: dict[str, str] = {}
 
 
 def load_packs(packs_dir: Path, include_disabled: bool = False) -> list[OfferPack]:
