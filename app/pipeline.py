@@ -14,12 +14,19 @@ from pathlib import Path
 
 import httpx
 
+from sqlalchemy import select
+
 from app.adapters import reddit_rss
+from app.classify import LeadScore
 from app.core.config import get_settings
 from app.db.session import get_session_factory, insert_new_posts
 from app.filtering import is_fresh, match_keywords
+from app.models.draft import Draft
 from app.models.event import Event
-from app.notify import format_alert, get_notifier
+from app.models.lead import Lead, transition
+from app.models.mute import Mute
+from app.models.raw_post import RawPost
+from app.notify import format_alert, format_approval_card, get_notifier
 from app.packs import load_packs
 
 log = logging.getLogger(__name__)
@@ -69,10 +76,6 @@ _BACKLOG_BATCH = 20
 
 
 async def _fetch_backlog(session, pack_name: str, limit: int):
-    from sqlalchemy import select
-
-    from app.models.raw_post import RawPost
-
     result = await session.execute(
         select(RawPost)
         .where(
@@ -102,6 +105,69 @@ async def _default_classify(session, pack, row, raw_post_id):
     return await classify_post(get_runner(), session, pack, row, raw_post_id=raw_post_id)
 
 
+async def _default_draft(session, pack, row, score, lead_id):
+    from app.draft import draft_lead
+    from app.services.claude_runner import get_runner
+
+    return await draft_lead(get_runner(), session, pack, row, score, lead_id)
+
+
+async def _load_mutes(session_factory) -> dict[str, set[tuple[str | None, str]]]:
+    async with session_factory() as session:
+        mutes = (await session.execute(select(Mute))).scalars().all()
+    out: dict[str, set[tuple[str | None, str]]] = {"keyword": set(), "community": set()}
+    for m in mutes:
+        out.setdefault(m.kind, set()).add((m.pack, m.value.lower()))
+    return out
+
+
+def _is_muted(muted: set[tuple[str | None, str]], pack_name: str, value: str) -> bool:
+    v = value.lower()
+    return (pack_name, v) in muted or (None, v) in muted
+
+
+async def _push_approval_card(session, notifier, pack_name, np, lead, variants, score, summary):
+    """Outbox delivery: the lead is already committed as 'drafted'; marking
+    approval_pushed_at only after a successful send makes the push retryable
+    without duplicating leads."""
+    card, buttons = format_approval_card(
+        np, pack_name, np.matched_keywords, score, variants, lead.id
+    )
+    if await notifier.send_with_buttons(card, buttons):
+        now = datetime.now(UTC)
+        lead.approval_pushed_at = now
+        np.alerted_at = now
+        summary["alerted"] += 1
+        session.add(Event(kind="approval_pushed", payload={"lead_id": lead.id, "pack": pack_name}))
+    else:
+        session.add(Event(kind="alert_failed", payload={"lead_id": lead.id, "pack": pack_name}))
+    await session.commit()
+
+
+async def _retry_unpushed_cards(session, notifier, pack, summary) -> None:
+    rows = (
+        await session.execute(
+            select(Lead, RawPost)
+            .join(RawPost, RawPost.id == Lead.raw_post_id)
+            .where(
+                Lead.pack == pack.name,
+                Lead.status == "drafted",
+                Lead.approval_pushed_at.is_(None),
+            )
+            .order_by(Lead.id)
+            .limit(10)
+        )
+    ).all()
+    for lead, np in rows:
+        drafts = (
+            await session.execute(
+                select(Draft).where(Draft.lead_id == lead.id).order_by(Draft.variant)
+            )
+        ).scalars().all()
+        score = LeadScore.model_validate(np.score) if np.score else None
+        await _push_approval_card(session, notifier, pack.name, np, lead, drafts, score, summary)
+
+
 async def _send_and_mark(session, notifier, np, pack_name: str, card: str, summary: dict) -> None:
     if await notifier.send(card):
         np.alerted_at = datetime.now(UTC)
@@ -118,6 +184,7 @@ async def run_poll_cycle(
     packs=None,
     poll_fn=None,
     classify_fn=None,
+    draft_fn=None,
     breaker: ClassifierBreaker | None = None,
 ) -> dict:
     """Poll every enabled pack once. Returns summary counts."""
@@ -127,7 +194,9 @@ async def run_poll_cycle(
     packs = packs if packs is not None else load_packs(_resolve_packs_dir(settings.PACKS_DIR))
     poll_fn = poll_fn or select_poll_fn(settings)
     classify_fn = classify_fn or _default_classify
+    draft_fn = draft_fn or _default_draft
     breaker = breaker or _breaker
+    muted = await _load_mutes(session_factory)
     if not packs:
         log.warning("no enabled packs loaded from %s — nothing to poll", settings.PACKS_DIR)
 
@@ -150,11 +219,14 @@ async def run_poll_cycle(
             for post in posts:
                 if not is_fresh(post.created_at, pack.max_age_minutes):
                     continue
+                if post.community and _is_muted(muted["community"], pack.name, post.community):
+                    continue
                 matched = match_keywords(
                     f"{post.title or ''}\n{post.text}",
                     pack.keywords.include,
                     pack.keywords.exclude,
                 )
+                matched = [k for k in matched if not _is_muted(muted["keyword"], pack.name, k)]
                 if not matched:
                     continue
                 summary["matched"] += 1
@@ -238,9 +310,42 @@ async def run_poll_cycle(
                         summary["suppressed"] += 1
                         continue
                     summary["surfaced"] += 1
-                    card = format_alert(np, pack.name, np.matched_keywords, score=score)
-                    await _send_and_mark(session, notifier, np, pack.name, card, summary)
+
+                    # surfaced -> lead -> drafts (tier standard) -> approval card
+                    lead = Lead(raw_post_id=np.id, pack=pack.name)
+                    session.add(lead)
+                    await session.flush()
+                    variants = None
+                    try:
+                        variants = await draft_fn(
+                            session, pack, row | {"raw_post_id": np.id}, score, lead.id
+                        )
+                    except Exception:
+                        log.exception("draft_fn raised (lead_id=%s)", lead.id)
+                    if variants:
+                        transition(lead, "drafted")
+                        for v in variants:
+                            session.add(
+                                Draft(
+                                    lead_id=lead.id,
+                                    variant=v.variant,
+                                    channel=v.channel,
+                                    text=v.text,
+                                    risk_flags=v.risk_flags,
+                                )
+                            )
+                        await session.commit()  # outbox: durable before the push
+                        await _push_approval_card(
+                            session, notifier, pack.name, np, lead, variants, score, summary
+                        )
+                    else:
+                        # degrade: plain scored alert so the lead still reaches the phone
+                        card = format_alert(np, pack.name, np.matched_keywords, score=score)
+                        await _send_and_mark(session, notifier, np, pack.name, card, summary)
                 await session.commit()
+
+                # outbox retry: drafted leads whose card never reached Telegram
+                await _retry_unpushed_cards(session, notifier, pack, summary)
 
     duration_ms = int((time.monotonic() - started) * 1000)
     async with session_factory() as session:

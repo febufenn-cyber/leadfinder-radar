@@ -73,11 +73,60 @@ def format_alert(
     return "\n".join(lines)
 
 
+def format_approval_card(
+    post, pack_name: str, matched: list[str], score, variants, lead_id: int
+) -> tuple[str, list[list[dict]]]:
+    """Approval card (DESIGN §3.6): scored header + full variants + inline buttons.
+
+    Variant texts are what the owner will actually post — they are only trimmed
+    at 900 chars each (with a marker); the full text always comes back on approve.
+    """
+    community = f"r/{post.community}" if post.community else post.source
+    fit = f" · ⭐ {score.fit_score}" if score is not None else ""
+    lines = [
+        f"🎯 <b>[{html.escape(pack_name)}]</b> {html.escape(community)}"
+        f" · {_age_str(post.created_at)}{fit}",
+        f"<b>{html.escape((post.title or '(no title)')[:300])}</b>",
+    ]
+    if score is not None:
+        lines.append(f"<i>{html.escape(score.one_line_summary[:200])}</i>")
+        lines.append(html.escape(f"{score.intent} · {score.urgency} · budget: {score.budget_signal}"))
+    lines.append(html.escape(post.url))
+    for v in variants:
+        flags = f" ⚠️ {', '.join(v.risk_flags)}" if v.risk_flags else ""
+        text = v.text if len(v.text) <= 900 else v.text[:900] + "… (trimmed — full text on send)"
+        lines.append(f"\n<b>— {v.variant} ({html.escape(v.channel)}){html.escape(flags)}</b>")
+        lines.append(html.escape(text))
+    card = "\n".join(lines)[:_TELEGRAM_LIMIT]
+
+    send_row = [
+        {"text": f"Send {v.variant}", "callback_data": f"a:send:{v.variant}:{lead_id}"}
+        for v in variants
+    ]
+    buttons = [
+        send_row,
+        [
+            {"text": "✏️ Edit", "callback_data": f"a:edit:_:{lead_id}"},
+            {"text": "⏭ Skip", "callback_data": f"a:skip:_:{lead_id}"},
+        ],
+        [
+            {"text": "🔇 Mute keyword", "callback_data": f"a:mutekw:_:{lead_id}"},
+            {"text": "🔇 Mute community", "callback_data": f"a:mutecomm:_:{lead_id}"},
+        ],
+    ]
+    return card, buttons
+
+
 class ConsoleNotifier:
     """Fallback when Telegram isn't configured — alert lands in the worker log."""
 
     async def send(self, text: str) -> bool:
         log.info("ALERT (console fallback):\n%s", text)
+        return True
+
+    async def send_with_buttons(self, text: str, buttons: list[list[dict]]) -> bool:
+        labels = [[b["text"] for b in row] for row in buttons]
+        log.info("APPROVAL CARD (console fallback):\n%s\nbuttons=%s", text, labels)
         return True
 
 
@@ -88,12 +137,28 @@ class TelegramNotifier:
 
     async def send(self, text: str) -> bool:
         """Send one alert. Never raises — a dead Telegram must not kill the poll cycle."""
-        payload = {
-            "chat_id": self._chat_id,
-            "text": text,
-            "parse_mode": "HTML",
-            "disable_web_page_preview": False,
-        }
+        return await self._post(
+            {
+                "chat_id": self._chat_id,
+                "text": text,
+                "parse_mode": "HTML",
+                "disable_web_page_preview": False,
+            }
+        )
+
+    async def send_with_buttons(self, text: str, buttons: list[list[dict]]) -> bool:
+        """Approval card with an inline keyboard (DESIGN §3.6). Never raises."""
+        return await self._post(
+            {
+                "chat_id": self._chat_id,
+                "text": text,
+                "parse_mode": "HTML",
+                "disable_web_page_preview": True,
+                "reply_markup": {"inline_keyboard": buttons},
+            }
+        )
+
+    async def _post(self, payload: dict) -> bool:
         try:
             async with httpx.AsyncClient(timeout=10.0) as client:
                 resp = await client.post(self._url, json=payload)
