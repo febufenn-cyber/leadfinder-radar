@@ -22,7 +22,7 @@ import yaml
 from pydantic import BaseModel, Field, ValidationError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.classify import LeadScore
+from app.classify import LeadScore, harden_payload
 from app.models.event import Event
 from app.packs import OfferPack
 
@@ -153,7 +153,7 @@ Inside JSON strings, escape newlines as \\n — never emit raw line breaks in a 
         },
         ensure_ascii=False,
     )
-    user = f"<untrusted_post_data>\n{payload}\n</untrusted_post_data>"
+    user = f"<untrusted_post_data>\n{harden_payload(payload)}\n</untrusted_post_data>"
     return system, user
 
 

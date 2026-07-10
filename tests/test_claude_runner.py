@@ -56,6 +56,9 @@ async def test_success_parses_fenced_json_and_records_call(db_factory):
     # the DoD guardrails from the thesis-studio runner must be present
     assert "--strict-mcp-config" in runner.seen_args
     assert "--no-session-persistence" in runner.seen_args
+    # a silent regression here would break EVERY call's result parsing
+    assert "--output-format" in runner.seen_args
+    assert runner.seen_args[runner.seen_args.index("--output-format") + 1] == "json"
 
 
 async def test_cli_failure_returns_none_and_records_failure(db_factory):
@@ -108,6 +111,33 @@ async def test_stderr_secrets_scrubbed_from_error(db_factory):
     call = await get_only_call(db_factory)
     assert "sk-ant-" not in call.error
     assert "[redacted]" in call.error
+
+
+async def test_trailing_prose_with_braces_still_parses(db_factory):
+    runner = FakeRunner(result_event=ok_event('{"a": 1}\nHope that {helps}!'))
+    runner.audit_factory = db_factory
+    payload = await runner.run_json(
+        purpose="classify", system_prompt="s", user_prompt="u", tier="fast"
+    )
+    assert payload == {"a": 1}
+
+
+async def test_cancellation_writes_audit_row_then_reraises(db_factory):
+    import asyncio
+
+    import pytest
+
+    class CancellingRunner(FakeRunner):
+        async def _run_cli(self, args, timeout):
+            raise asyncio.CancelledError
+
+    runner = CancellingRunner()
+    runner.audit_factory = db_factory
+    with pytest.raises(asyncio.CancelledError):
+        await runner.run_json(purpose="classify", system_prompt="s", user_prompt="u", tier="fast")
+    call = await get_only_call(db_factory)
+    assert call.success is False
+    assert "cancelled" in call.error
 
 
 async def test_audit_row_survives_pre_try_failures(db_factory):

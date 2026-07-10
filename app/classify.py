@@ -47,6 +47,12 @@ class LeadScore(BaseModel):
             return v  # let the field validation raise properly
 
 
+def harden_payload(payload_json: str) -> str:
+    """Escape angle brackets as JSON unicode escapes so post content can never
+    fake or close the <untrusted_post_data> delimiter."""
+    return payload_json.replace("<", "\\u003c").replace(">", "\\u003e")
+
+
 def load_fewshots(pack_name: str) -> list[dict]:
     """[{text, label ('positive'|'near_miss'), score: {...}}, ...] or []."""
     path = _FEWSHOTS_DIR / f"{pack_name}.yaml"
@@ -106,7 +112,7 @@ missing; 40-59 problem statement that the offer could solve; <40 weak or off-tar
         },
         ensure_ascii=False,
     )
-    user = f"<untrusted_post_data>\n{payload}\n</untrusted_post_data>"
+    user = f"<untrusted_post_data>\n{harden_payload(payload)}\n</untrusted_post_data>"
     return system, user
 
 

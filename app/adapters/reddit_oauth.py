@@ -124,8 +124,9 @@ class RedditOAuth:
                     self._cooldown_until[url] = now + _DEFAULT_COOLDOWN
                     log.warning("429 — cooling %s until %s", url, self._cooldown_until[url])
                 elif exc.response.status_code == 401:
-                    self._token = None  # force refresh next cycle
-                    log.warning("401 from reddit oauth — token invalidated, will refresh")
+                    self._token = None
+                    log.warning("401 from reddit oauth — token invalidated, refresh next cycle")
+                    break  # every remaining URL would fail with the same dead token
                 else:
                     log.warning("oauth fetch failed url=%s err=%s", url, exc)
                 continue

@@ -37,7 +37,9 @@ log = logging.getLogger(__name__)
 _EMPTY_MCP_CONFIG = str(Path(__file__).parent / "empty_mcp_config.json")
 _FENCE_RE = re.compile(r"^```[a-zA-Z]*\s*|\s*```$")
 # CLI stderr can theoretically echo credentials on auth failures — scrub before storing.
-_SECRET_RE = re.compile(r"(sk-ant-[A-Za-z0-9_\-]{8,}|Bearer\s+\S+)")
+_SECRET_RE = re.compile(
+    r"(sk-ant-[A-Za-z0-9_\-]{8,}|Bearer\s+\S+|\d{8,10}:[A-Za-z0-9_\-]{30,})"
+)
 
 
 def _escape_ctrl_in_strings(s: str) -> str:
@@ -62,11 +64,40 @@ def _escape_ctrl_in_strings(s: str) -> str:
     return "".join(out)
 
 
+def _brace_span(s: str) -> str:
+    """The substring from the first '{' to ITS matching '}' (string-aware) —
+    rfind would grab braces in trailing prose like 'hope that {helps}'."""
+    start = s.find("{")
+    if start < 0:
+        return ""
+    depth = 0
+    in_str = esc = False
+    for i in range(start, len(s)):
+        ch = s[i]
+        if in_str:
+            if esc:
+                esc = False
+            elif ch == "\\":
+                esc = True
+            elif ch == '"':
+                in_str = False
+            continue
+        if ch == '"':
+            in_str = True
+        elif ch == "{":
+            depth += 1
+        elif ch == "}":
+            depth -= 1
+            if depth == 0:
+                return s[start : i + 1]
+    return s[start:]  # unbalanced — let the repair pass try anyway
+
+
 def _extract_json(text: str) -> dict | None:
-    """Best-effort JSON object extraction: strip fences, take the {...} span,
-    and repair raw control characters inside strings."""
+    """Best-effort JSON object extraction: strip fences, take the balanced
+    {...} span, and repair raw control characters inside strings."""
     candidate = _FENCE_RE.sub("", text.strip())
-    span = candidate[candidate.find("{") : candidate.rfind("}") + 1]
+    span = _brace_span(candidate)
     for attempt in (candidate, span, _escape_ctrl_in_strings(span)):
         if not attempt:
             continue
@@ -118,6 +149,11 @@ class ClaudeRunner:
             proc.kill()
             await proc.wait()
             return -1, b"", f"timeout after {timeout}s".encode()
+        except asyncio.CancelledError:
+            # worker shutdown mid-call: don't orphan the claude subprocess
+            proc.kill()
+            await proc.wait()
+            raise
         return proc.returncode or 0, stdout, stderr
 
     async def run_json(
@@ -142,6 +178,7 @@ class ClaudeRunner:
         cost = None
         error = None
         sys_file = None
+        cancelled = False
         try:
             settings = get_settings()
             timeout = timeout or settings.CLASSIFY_TIMEOUT_SECONDS
@@ -186,6 +223,11 @@ class ClaudeRunner:
                 if payload is None:
                     head = result_event.get("result", "")[:200]
                     error = f"result text was not a valid JSON object; head: {head!r}"
+        except asyncio.CancelledError:
+            # CancelledError is a BaseException: without this clause it would skip
+            # the audit write entirely. Record, then re-raise after auditing.
+            error = "runner cancelled (worker shutdown)"
+            cancelled = True
         except Exception as exc:  # audit row must survive anything
             error = f"runner exception: {exc!r}"
         finally:
@@ -220,6 +262,8 @@ class ClaudeRunner:
             log.exception("failed to write llm_calls audit row (purpose=%s)", purpose)
         if error:
             log.warning("llm call failed purpose=%s tier=%s: %s", purpose, tier, error)
+        if cancelled:
+            raise asyncio.CancelledError  # cooperative cancellation resumes post-audit
         return payload
 
 

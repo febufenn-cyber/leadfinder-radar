@@ -235,6 +235,10 @@ async def run_poll_cycle(
             async with session_factory() as session:
                 new_posts = await insert_new_posts(session, rows)
                 summary["new"] += len(new_posts)
+                # commit the inserts immediately: LLM work below takes minutes per
+                # lead, and an interrupted cycle recovers via the classified_at
+                # backlog instead of losing the batch to a rollback
+                await session.commit()
 
                 # Work queue: fresh posts, plus (breaker closed) any outage backlog,
                 # or (breaker open, nothing new) one backlog item as the probe.
@@ -342,6 +346,7 @@ async def run_poll_cycle(
                         # degrade: plain scored alert so the lead still reaches the phone
                         card = format_alert(np, pack.name, np.matched_keywords, score=score)
                         await _send_and_mark(session, notifier, np, pack.name, card, summary)
+                    await session.commit()  # short transactions: one lead at a time
                 await session.commit()
 
                 # outbox retry: drafted leads whose card never reached Telegram
@@ -352,5 +357,12 @@ async def run_poll_cycle(
         session.add(Event(kind="poll_cycle", payload=summary | {"duration_ms": duration_ms}))
         await session.commit()
 
+    interval_ms = settings.POLL_INTERVAL_MINUTES * 60_000
+    if duration_ms > interval_ms:
+        log.warning(
+            "poll cycle took %.1f min (interval %d min) — subsequent ticks were skipped "
+            "while drafting; freshness degraded this window",
+            duration_ms / 60_000, settings.POLL_INTERVAL_MINUTES,
+        )
     log.info("poll cycle done %s (%dms)", summary, duration_ms)
     return summary
