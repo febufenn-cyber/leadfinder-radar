@@ -14,6 +14,11 @@ Callback data grammar (≤64 bytes): "a:<action>:<arg>:<lead_id>"
   a:skip:_:12    skip lead 12
   a:mutekw:_:12  choose which matched keyword to mute (second keyboard: a:mk:<idx>:12)
   a:mutecomm:_:12  mute the lead's community for its pack
+  a:cxl:33:12    cancel queued send #33 (api mode; the jitter window is the undo window)
+
+SEND_MODE=api (M4): "Send X" queues a jittered API send instead of the copy
+block — same per-item approval gate, same buttons; §0 still holds because the
+sends row can only be created from this approval path.
 """
 
 from __future__ import annotations
@@ -31,7 +36,15 @@ from telegram.ext import (
     filters,
 )
 
-from app.approval import ApprovalError, add_mute, approve, save_edit, skip
+from app.approval import (
+    ApprovalError,
+    add_mute,
+    approve,
+    cancel_send,
+    queue_send,
+    save_edit,
+    skip,
+)
 from app.core.config import get_settings
 from app.db.session import get_session_factory
 from app.models.lead import Lead
@@ -88,8 +101,34 @@ async def on_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
     try:
         async with factory() as session:
             if action == "send":
-                payload = await approve(session, lead_id, arg)
-                await _say(update, context, _copy_message(payload), parse_mode="HTML")
+                if get_settings().SEND_MODE == "api":
+                    send = await queue_send(session, lead_id, arg)
+                    from zoneinfo import ZoneInfo
+
+                    eta = send.scheduled_at.astimezone(
+                        ZoneInfo(get_settings().OWNER_TZ)
+                    ).strftime("%H:%M")
+                    await _say(
+                        update, context,
+                        f"⏱ Queued variant {arg} for lead #{lead_id} — posts ~{eta} "
+                        f"(guardrails re-check at send time).",
+                        reply_markup=InlineKeyboardMarkup([[
+                            InlineKeyboardButton(
+                                "✖️ Cancel", callback_data=f"a:cxl:{send.id}:{lead_id}"
+                            )
+                        ]]),
+                    )
+                else:
+                    payload = await approve(session, lead_id, arg)
+                    await _say(update, context, _copy_message(payload), parse_mode="HTML")
+            elif action == "cxl":
+                if await cancel_send(session, int(arg)):
+                    await _say(
+                        update, context,
+                        f"✖️ Cancelled send for lead #{lead_id} — it stays approvable.",
+                    )
+                else:
+                    await _say(update, context, "Too late — that send already executed.")
             elif action == "edit":
                 from sqlalchemy import select
 

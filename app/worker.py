@@ -12,6 +12,8 @@ from arq.connections import RedisSettings
 
 from app.core.config import get_settings
 from app.pipeline import run_draft_cycle, run_poll_cycle
+from app.sending import run_send_cycle
+from app.watch import run_watch_cycle
 
 logging.basicConfig(
     level=get_settings().LOG_LEVEL,
@@ -27,6 +29,14 @@ async def poll_job(ctx: dict) -> dict:
 
 async def draft_job(ctx: dict) -> dict:
     return await run_draft_cycle()
+
+
+async def send_job(ctx: dict) -> dict:
+    return await run_send_cycle()
+
+
+async def watch_job(ctx: dict) -> dict:
+    return await run_watch_cycle()
 
 
 _settings = get_settings()
@@ -54,5 +64,20 @@ class WorkerSettings:
             run_at_startup=True,
             unique=True,
             timeout=1800,  # sonnet drafting runs ~3 min per lead, batch of 3
+        ),
+        cron(
+            send_job,
+            second=15,  # every minute — cheap no-op when nothing is due
+            run_at_startup=False,  # let a restart settle before posting anything
+            unique=True,
+            timeout=120,
+        ),
+        cron(
+            watch_job,
+            minute=set(range(0, 60, _settings.WATCH_INTERVAL_MINUTES)),
+            second=45,
+            run_at_startup=False,
+            unique=True,
+            timeout=300,
         ),
     ]

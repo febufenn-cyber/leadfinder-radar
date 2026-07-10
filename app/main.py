@@ -15,8 +15,10 @@ from sqlalchemy import desc, func, select, text
 from app.db.session import get_session_factory
 from app.models.draft import Draft
 from app.models.event import Event
+from app.models.halt import Halt
 from app.models.lead import Lead
 from app.models.raw_post import RawPost
+from app.models.send import Send
 
 _FUNNEL_ORDER = [
     "surfaced", "drafted", "sent", "replied", "conversation",
@@ -102,7 +104,7 @@ async def index() -> str:
 </style></head>
 <body>
 <h2>LeadFinder — matched posts</h2>
-<p class="meta">last poll: {last} · newest 100 · auto-refreshes every 60s · <a href="/leads">leads</a></p>
+<p class="meta">last poll: {last} · newest 100 · auto-refreshes every 60s · <a href="/leads">leads</a> · <a href="/sends">sends</a></p>
 <p class="meta">funnel — {funnel}</p>
 <table>
 <tr><th>fetched</th><th>fit</th><th>pack</th><th>community</th><th>title</th><th>matched</th><th>alerted</th></tr>
@@ -155,9 +157,68 @@ async def leads_view() -> str:
 </style></head>
 <body>
 <h2>Leads</h2>
-<p><a href="/">← matched posts</a></p>
+<p><a href="/">← matched posts</a> · <a href="/sends">sends</a></p>
 <table>
 <tr><th>#</th><th>status</th><th>pack</th><th>fit</th><th>post</th><th>card pushed</th><th>sent variant</th><th>created</th></tr>
+{body}
+</table>
+</body></html>"""
+
+
+@app.get("/sends", response_class=HTMLResponse)
+async def sends_view() -> str:
+    factory = get_session_factory()
+    async with factory() as session:
+        sends = (
+            (await session.execute(select(Send).order_by(desc(Send.created_at)).limit(50)))
+            .scalars()
+            .all()
+        )
+        halts = (
+            (
+                await session.execute(
+                    select(Halt).where(Halt.cleared_at.is_(None)).order_by(desc(Halt.created_at))
+                )
+            )
+            .scalars()
+            .all()
+        )
+
+    halt_banner = "".join(
+        f'<p class="halt">🛑 HALT [{html.escape(h.platform)}] {html.escape(h.reason)} '
+        f"(since {h.created_at:%m-%d %H:%M} — clear with scripts/clear_halt.py)</p>"
+        for h in halts
+    )
+    status_icon = {
+        "queued": "⏱", "sent": "✅", "failed": "⚠️", "halted": "🛑", "cancelled": "✖️",
+    }
+    body = "\n".join(
+        f"<tr><td>{s.id}</td><td>{status_icon.get(s.status, '')} {html.escape(s.status)}</td>"
+        f"<td>{s.lead_id}</td>"
+        f"<td>{html.escape(s.platform)}/{html.escape(s.channel)}</td>"
+        f"<td>{html.escape(s.community or '—')}</td>"
+        f"<td>{s.scheduled_at:%m-%d %H:%M}</td>"
+        f"<td>{f'{s.sent_at:%m-%d %H:%M}' if s.sent_at else '—'}</td>"
+        f"<td>{html.escape(s.error or s.external_result_id or '—')}</td></tr>"
+        for s in sends
+    ) or '<tr><td colspan="8">No sends yet — sends appear when SEND_MODE=api.</td></tr>'
+    return f"""<!doctype html>
+<html><head><meta charset="utf-8"><title>LeadFinder — sends</title>
+<meta http-equiv="refresh" content="60">
+<style>
+  body {{ font: 14px/1.5 -apple-system, sans-serif; margin: 2rem; color: #1a1a1a; }}
+  table {{ border-collapse: collapse; width: 100%; }}
+  th, td {{ text-align: left; padding: 6px 10px; border-bottom: 1px solid #e2e2e2; }}
+  th {{ background: #f6f6f6; }}
+  .halt {{ background: #fde8e8; border: 1px solid #f5b5b5; padding: 8px 12px; }}
+</style></head>
+<body>
+<h2>Sends</h2>
+<p><a href="/">← matched posts</a> · <a href="/leads">leads</a></p>
+{halt_banner}
+<table>
+<tr><th>#</th><th>status</th><th>lead</th><th>via</th><th>community</th>
+<th>scheduled</th><th>sent</th><th>result/error</th></tr>
 {body}
 </table>
 </body></html>"""
