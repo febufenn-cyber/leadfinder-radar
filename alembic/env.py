@@ -9,9 +9,11 @@ from sqlalchemy.ext.asyncio import async_engine_from_config
 
 import app.models.event  # noqa: F401 — register tables on Base.metadata
 import app.models.draft  # noqa: F401
+import app.models.halt  # noqa: F401
 import app.models.lead  # noqa: F401
 import app.models.llm_call  # noqa: F401
 import app.models.mute  # noqa: F401
+import app.models.send  # noqa: F401
 import app.models.raw_post  # noqa: F401
 from app.core.config import get_settings
 from app.db.base import Base
