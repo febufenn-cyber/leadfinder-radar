@@ -1,5 +1,10 @@
 # LeadFinder M2 Implementation Plan
 
+> **Status: BUILT 2026-07-10, review in flight.** Tasks 1-9 executed and committed.
+> Live-verified: real Sonnet draft (C+B variants, community rules respected, risk
+> flags meaningful, ~190s/$0.73 nominal). Bot wiring awaits the owner's Telegram
+> token for live verification. Task 10 (adversarial review) running.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: superpowers:executing-plans (inline, same session as author). Each task commits.
 
 **Goal:** M2 per DESIGN §7 — Sonnet drafting (A/B/C variants), Telegram approval buttons, copy-mode send, leads state machine. "Start working leads for real here."

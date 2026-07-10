@@ -1,5 +1,10 @@
 # LeadFinder M1 Implementation Plan
 
+> **Status: COMPLETED 2026-07-10.** All tasks executed and committed. Review findings
+> applied (audit-session isolation, classifier circuit breaker, prompt-injection
+> hardening, secret scrub); the correctness lens was re-run after a Max session-limit
+> failure. Live-verified: real Haiku classification (fit 85, $0.07, 13s).
+
 > **For agentic workers:** REQUIRED SUB-SKILL: superpowers:executing-plans (inline, same session as author). Checkbox steps track progress; each task commits.
 
 **Goal:** M1 per DESIGN §7 — Haiku classifier + threshold + scored alert cards (dedup/prefilter shipped early in M0). Plus the two things M0's live run demanded: the ClaudeRunner layer (Thesis Studio port, every LLM call logged with tokens/cost per DoD) and a Reddit OAuth adapter (search.rss is throttled for unauthenticated clients; RSS remains the fallback).
