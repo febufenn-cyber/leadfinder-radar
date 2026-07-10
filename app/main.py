@@ -140,10 +140,11 @@ async def leads_view() -> str:
         f"<td>{post.fit_score if post.fit_score is not None else '—'}</td>"
         f'<td><a href="{html.escape(post.url)}" target="_blank" rel="noopener">'
         f"{html.escape(post.title or '(no title)')}</a></td>"
+        f"<td>{'✅' if lead.approval_pushed_at else ('⏳' if lead.status == 'drafted' else '—')}</td>"
         f"<td>{chosen.get(lead.chosen_draft_id, '—')}</td>"
         f"<td>{lead.created_at:%m-%d %H:%M}</td></tr>"
         for lead, post in rows
-    ) or '<tr><td colspan="7">No leads yet.</td></tr>'
+    ) or '<tr><td colspan="8">No leads yet.</td></tr>'
     return f"""<!doctype html>
 <html><head><meta charset="utf-8"><title>LeadFinder — leads</title>
 <style>
@@ -156,7 +157,7 @@ async def leads_view() -> str:
 <h2>Leads</h2>
 <p><a href="/">← matched posts</a></p>
 <table>
-<tr><th>#</th><th>status</th><th>pack</th><th>fit</th><th>post</th><th>sent variant</th><th>created</th></tr>
+<tr><th>#</th><th>status</th><th>pack</th><th>fit</th><th>post</th><th>card pushed</th><th>sent variant</th><th>created</th></tr>
 {body}
 </table>
 </body></html>"""

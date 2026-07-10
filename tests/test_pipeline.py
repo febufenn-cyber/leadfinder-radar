@@ -1,5 +1,5 @@
-"""End-to-end poll cycle with injected poller/notifier/classifier:
-filter -> dedup -> store -> classify -> threshold gate -> alert -> events."""
+"""Poll cycle (fetch -> filter -> dedup -> classify -> threshold -> surfaced lead)
+and draft cycle (surfaced lead -> sonnet variants -> outbox approval card), decoupled."""
 
 from datetime import UTC, datetime, timedelta
 
@@ -13,13 +13,18 @@ from app.models.lead import Lead
 from app.models.mute import Mute
 from app.models.raw_post import RawPost
 from app.packs import OfferPack
-from app.pipeline import ClassifierBreaker, run_poll_cycle
+from app.pipeline import ClassifierBreaker, run_draft_cycle, run_poll_cycle
 from tests.test_notify import make_post
 
 GOOD_VARIANTS = [
     DraftVariant(variant="A", channel="comment", text="Two specific points."),
     DraftVariant(variant="B", channel="dm", text="Quick DM with one idea."),
 ]
+
+PACK = OfferPack(
+    name="testpack",
+    keywords={"include": ["need a website"], "exclude": ["for free"]},
+)
 
 
 def fake_draft(variants):
@@ -28,10 +33,15 @@ def fake_draft(variants):
 
     return _draft
 
-PACK = OfferPack(
-    name="testpack",
-    keywords={"include": ["need a website"], "exclude": ["for free"]},
-)
+
+class CountingDraft:
+    def __init__(self, variants):
+        self.variants = variants
+        self.calls = 0
+
+    async def __call__(self, session, pack, row, score, lead_id):
+        self.calls += 1
+        return self.variants
 
 
 def make_score(fit: int) -> LeadScore:
@@ -105,43 +115,39 @@ def sample_posts():
     ]
 
 
-async def test_cycle_stores_scores_drafts_and_pushes_approval_card(db_factory):
-    notifier = SpyNotifier()
-    classifier = SpyClassifier(make_score(82))
-    summary = await run_poll_cycle(
+async def surface_one_lead(db_factory, notifier=None) -> dict:
+    """Run one poll cycle that surfaces exactly one 82-fit lead."""
+    return await run_poll_cycle(
         session_factory=db_factory,
-        notifier=notifier,
+        notifier=notifier or SpyNotifier(),
         packs=[PACK],
         poll_fn=fake_poll(sample_posts()),
-        classify_fn=classifier,
-        draft_fn=fake_draft(GOOD_VARIANTS),
+        classify_fn=SpyClassifier(make_score(82)),
     )
+
+
+# ---------------------------------------------------------------- poll cycle
+
+
+async def test_poll_cycle_stores_scores_and_creates_surfaced_lead(db_factory):
+    notifier = SpyNotifier()
+    summary = await surface_one_lead(db_factory, notifier)
     assert summary["fetched"] == 4
     assert summary["matched"] == 1
     assert summary["new"] == 1
     assert summary["classified"] == 1
     assert summary["surfaced"] == 1
-    assert summary["alerted"] == 1
-    # approval card, not a plain alert
-    assert notifier.sent == []
-    assert len(notifier.cards) == 1
-    card, buttons = notifier.cards[0]
-    assert "82" in card and "Bakery owner wants a website" in card
-    assert "Two specific points." in card
-    assert buttons[0][0]["text"] == "Send A"
-    assert buttons[0][0]["callback_data"].startswith("a:send:A:")
+    assert summary["alerted"] == 0  # drafting/push is the draft cycle's job
+    assert notifier.sent == [] and notifier.cards == []
 
     async with db_factory() as session:
         post = (await session.execute(select(RawPost))).scalars().one()
         assert post.fit_score == 82
-        assert post.alerted_at is not None
+        assert post.score["urgency"] == "now"
+        assert post.alerted_at is None
         lead = (await session.execute(select(Lead))).scalars().one()
-        assert lead.status == "drafted"
-        assert lead.approval_pushed_at is not None
-        drafts = (await session.execute(select(Draft))).scalars().all()
-        assert {d.variant for d in drafts} == {"A", "B"}
-        kinds = set((await session.execute(select(Event.kind))).scalars().all())
-        assert kinds == {"approval_pushed", "poll_cycle"}
+        assert lead.status == "surfaced"
+        assert lead.draft_attempts == 0
 
 
 async def test_below_threshold_stored_but_not_surfaced(db_factory):
@@ -152,17 +158,14 @@ async def test_below_threshold_stored_but_not_surfaced(db_factory):
         packs=[PACK],
         poll_fn=fake_poll(sample_posts()),
         classify_fn=SpyClassifier(make_score(30)),
-        draft_fn=fake_draft(GOOD_VARIANTS),
     )
-    assert summary["new"] == 1
     assert summary["surfaced"] == 0
     assert summary["suppressed"] == 1
-    assert summary["alerted"] == 0
     assert notifier.sent == []
     async with db_factory() as session:
         post = (await session.execute(select(RawPost))).scalars().one()
         assert post.fit_score == 30  # stored for eval/tuning (DESIGN §3.3)
-        assert post.alerted_at is None
+        assert (await session.execute(select(Lead))).scalars().all() == []
 
 
 async def test_classifier_failure_alerts_unscored(db_factory):
@@ -173,95 +176,28 @@ async def test_classifier_failure_alerts_unscored(db_factory):
         packs=[PACK],
         poll_fn=fake_poll(sample_posts()),
         classify_fn=SpyClassifier(None),
-        draft_fn=fake_draft(GOOD_VARIANTS),
         breaker=ClassifierBreaker(),  # isolate from the module singleton
     )
     assert summary["alerted"] == 1  # over-alerting beats losing a lead
     assert "UNSCORED" in notifier.sent[0]
-    async with db_factory() as session:
-        post = (await session.execute(select(RawPost))).scalars().one()
-        assert post.fit_score is None
 
 
 async def test_second_cycle_is_all_dupes_and_skips_classifier(db_factory):
     posts = sample_posts()
     classifier = SpyClassifier(make_score(82))
     for _ in range(2):
-        notifier = SpyNotifier()
         summary = await run_poll_cycle(
             session_factory=db_factory,
-            notifier=notifier,
+            notifier=SpyNotifier(),
             packs=[PACK],
             poll_fn=fake_poll(posts),
             classify_fn=classifier,
-            draft_fn=fake_draft(GOOD_VARIANTS),
         )
     assert summary["new"] == 0
-    assert summary["alerted"] == 0
-    assert notifier.sent == []
     assert classifier.calls == 1  # dupes never reach the LLM (token discipline)
-
-
-async def test_failed_alert_keeps_post_unalerted(db_factory):
-    summary = await run_poll_cycle(
-        session_factory=db_factory,
-        notifier=SpyNotifier(ok=False),
-        packs=[PACK],
-        poll_fn=fake_poll(sample_posts()),
-        classify_fn=SpyClassifier(make_score(82)),
-        draft_fn=fake_draft(GOOD_VARIANTS),
-    )
-    assert summary["new"] == 1
-    assert summary["alerted"] == 0
     async with db_factory() as session:
-        post = (await session.execute(select(RawPost))).scalars().one()
-        assert post.alerted_at is None
-        kinds = set((await session.execute(select(Event.kind))).scalars().all())
-        assert "alert_failed" in kinds
-
-
-async def test_push_failure_retries_next_cycle_without_duplicates(db_factory):
-    kwargs = dict(
-        session_factory=db_factory,
-        packs=[PACK],
-        classify_fn=SpyClassifier(make_score(82)),
-        draft_fn=fake_draft(GOOD_VARIANTS),
-    )
-    # cycle 1: telegram down -> lead drafted, card unpushed
-    s1 = await run_poll_cycle(
-        notifier=SpyNotifier(ok=False), poll_fn=fake_poll(sample_posts()), **kwargs
-    )
-    assert s1["alerted"] == 0
-    # cycle 2: telegram back, no new posts -> outbox retry delivers exactly one card
-    notifier = SpyNotifier()
-    s2 = await run_poll_cycle(notifier=notifier, poll_fn=fake_poll([]), **kwargs)
-    assert s2["alerted"] == 1
-    assert len(notifier.cards) == 1
-    # cycle 3: nothing left to push
-    notifier3 = SpyNotifier()
-    await run_poll_cycle(notifier=notifier3, poll_fn=fake_poll([]), **kwargs)
-    assert notifier3.cards == []
-    async with db_factory() as session:
-        lead = (await session.execute(select(Lead))).scalars().one()
-        assert lead.approval_pushed_at is not None
-
-
-async def test_draft_failure_falls_back_to_plain_scored_alert(db_factory):
-    notifier = SpyNotifier()
-    summary = await run_poll_cycle(
-        session_factory=db_factory,
-        notifier=notifier,
-        packs=[PACK],
-        poll_fn=fake_poll(sample_posts()),
-        classify_fn=SpyClassifier(make_score(82)),
-        draft_fn=fake_draft(None),
-    )
-    assert summary["alerted"] == 1
-    assert notifier.cards == []  # no approval card
-    assert "82" in notifier.sent[0]  # plain scored alert still reached the phone
-    async with db_factory() as session:
-        lead = (await session.execute(select(Lead))).scalars().one()
-        assert lead.status == "surfaced"  # never advanced without drafts
+        leads = (await session.execute(select(Lead))).scalars().all()
+        assert len(leads) == 1  # no duplicate lead either
 
 
 async def test_muted_community_and_keyword_are_skipped(db_factory):
@@ -281,10 +217,91 @@ async def test_muted_community_and_keyword_are_skipped(db_factory):
                          keywords={"include": ["need a website", "landing page"]})],
         poll_fn=fake_poll(posts),
         classify_fn=SpyClassifier(make_score(82)),
-        draft_fn=fake_draft(GOOD_VARIANTS),
     )
     assert summary["matched"] == 0
-    assert summary["new"] == 0
+
+
+# ---------------------------------------------------------------- draft cycle
+
+
+async def test_draft_cycle_drafts_and_pushes_card(db_factory):
+    await surface_one_lead(db_factory)
+    notifier = SpyNotifier()
+    summary = await run_draft_cycle(
+        session_factory=db_factory,
+        notifier=notifier,
+        packs=[PACK],
+        draft_fn=fake_draft(GOOD_VARIANTS),
+    )
+    assert summary["drafted"] == 1
+    assert summary["pushed"] == 1
+    assert len(notifier.cards) == 1
+    card, buttons = notifier.cards[0]
+    assert "82" in card and "Two specific points." in card
+    assert buttons[0][0]["callback_data"].startswith("a:send:A:")
+
+    async with db_factory() as session:
+        lead = (await session.execute(select(Lead))).scalars().one()
+        assert lead.status == "drafted"
+        assert lead.approval_pushed_at is not None
+        drafts = (await session.execute(select(Draft))).scalars().all()
+        assert {d.variant for d in drafts} == {"A", "B"}
+        post = (await session.execute(select(RawPost))).scalars().one()
+        assert post.alerted_at is not None
+        kinds = set((await session.execute(select(Event.kind))).scalars().all())
+        assert "approval_pushed" in kinds
+
+
+async def test_draft_failure_capped_then_fallback_alert(db_factory):
+    await surface_one_lead(db_factory)
+    notifier = SpyNotifier()
+    failing = CountingDraft(None)
+    for _ in range(4):  # one more cycle than the cap
+        summary = await run_draft_cycle(
+            session_factory=db_factory,
+            notifier=notifier,
+            packs=[PACK],
+            draft_fn=failing,
+        )
+    assert failing.calls == 3  # capped — no infinite sonnet spend
+    assert summary["drafted"] == 0
+    assert len(notifier.sent) == 1  # single plain-card fallback on the final attempt
+    assert "82" in notifier.sent[0]
+    assert notifier.cards == []
+    async with db_factory() as session:
+        lead = (await session.execute(select(Lead))).scalars().one()
+        assert lead.status == "surfaced"
+        assert lead.draft_attempts == 3
+        kinds = (await session.execute(select(Event.kind))).scalars().all()
+        assert "draft_gave_up" in kinds
+
+
+async def test_push_failure_retries_next_cycle_without_duplicates(db_factory):
+    await surface_one_lead(db_factory)
+    drafter = CountingDraft(GOOD_VARIANTS)
+    # cycle 1: telegram down -> drafted, card unpushed
+    s1 = await run_draft_cycle(
+        session_factory=db_factory, notifier=SpyNotifier(ok=False),
+        packs=[PACK], draft_fn=drafter,
+    )
+    assert s1["drafted"] == 1 and s1["pushed"] == 0
+    # cycle 2: telegram back -> outbox retry delivers exactly one card, no re-draft
+    notifier = SpyNotifier()
+    s2 = await run_draft_cycle(
+        session_factory=db_factory, notifier=notifier, packs=[PACK], draft_fn=drafter,
+    )
+    assert drafter.calls == 1
+    assert s2["pushed"] == 1
+    assert len(notifier.cards) == 1
+    # cycle 3: nothing left
+    notifier3 = SpyNotifier()
+    await run_draft_cycle(
+        session_factory=db_factory, notifier=notifier3, packs=[PACK], draft_fn=drafter,
+    )
+    assert notifier3.cards == []
+
+
+# ---------------------------------------------------------------- circuit breaker
 
 
 def many_matching_posts(n: int):
@@ -300,12 +317,9 @@ async def test_breaker_opens_after_three_failures_and_stops_alert_spam(db_factor
         packs=[PACK],
         poll_fn=fake_poll(many_matching_posts(6)),
         classify_fn=SpyClassifier(None),
-        draft_fn=fake_draft(GOOD_VARIANTS),
         breaker=breaker,
     )
     assert breaker.is_open()
-    # posts 1-2: sporadic UNSCORED alerts; post 3 trips the breaker (down notice);
-    # posts 4-6 deferred silently
     unscored = [t for t in notifier.sent if "UNSCORED" in t]
     notices = [t for t in notifier.sent if "classifier appears down" in t]
     assert len(unscored) == 2
@@ -322,17 +336,17 @@ async def test_open_breaker_probes_once_per_cycle(db_factory):
     classifier = SpyClassifier(None)
     await run_poll_cycle(
         session_factory=db_factory, notifier=notifier, packs=[PACK],
-        poll_fn=fake_poll(many_matching_posts(3)), classify_fn=classifier, draft_fn=fake_draft(GOOD_VARIANTS), breaker=breaker,
+        poll_fn=fake_poll(many_matching_posts(3)), classify_fn=classifier, breaker=breaker,
     )
     assert classifier.calls == 1  # first call opened it; rest deferred
     await run_poll_cycle(
         session_factory=db_factory, notifier=notifier, packs=[PACK],
-        poll_fn=fake_poll([]), classify_fn=classifier, draft_fn=fake_draft(GOOD_VARIANTS), breaker=breaker,
+        poll_fn=fake_poll([]), classify_fn=classifier, breaker=breaker,
     )
     assert classifier.calls == 2  # exactly one probe on the stored backlog
 
 
-async def test_recovery_drains_backlog(db_factory):
+async def test_recovery_drains_backlog_into_surfaced_leads(db_factory):
     notifier = SpyNotifier()
     breaker = ClassifierBreaker(threshold=1)
     classifier = FlakyClassifier(recover_after=1, score=make_score(82))
@@ -340,26 +354,24 @@ async def test_recovery_drains_backlog(db_factory):
     # cycle 1: first classify fails -> breaker opens, all 4 stored unclassified
     s1 = await run_poll_cycle(
         session_factory=db_factory, notifier=notifier, packs=[PACK],
-        poll_fn=fake_poll(posts), classify_fn=classifier, draft_fn=fake_draft(GOOD_VARIANTS), breaker=breaker,
+        poll_fn=fake_poll(posts), classify_fn=classifier, breaker=breaker,
     )
-    assert s1["deferred"] == 4 and s1["alerted"] == 0
-    # cycle 2: probe succeeds (breaker closes), probe post alerted
+    assert s1["deferred"] == 4 and s1["surfaced"] == 0
+    # cycle 2: probe succeeds (breaker closes), probe post surfaced
     s2 = await run_poll_cycle(
         session_factory=db_factory, notifier=notifier, packs=[PACK],
-        poll_fn=fake_poll(posts), classify_fn=classifier, draft_fn=fake_draft(GOOD_VARIANTS), breaker=breaker,
+        poll_fn=fake_poll(posts), classify_fn=classifier, breaker=breaker,
     )
     assert not breaker.is_open()
-    assert s2["alerted"] == 1
+    assert s2["surfaced"] == 1
     # cycle 3: breaker closed -> backlog drains fully
     s3 = await run_poll_cycle(
         session_factory=db_factory, notifier=notifier, packs=[PACK],
-        poll_fn=fake_poll([]), classify_fn=classifier, draft_fn=fake_draft(GOOD_VARIANTS), breaker=breaker,
+        poll_fn=fake_poll([]), classify_fn=classifier, breaker=breaker,
     )
-    assert s3["classified"] == 3 and s3["alerted"] == 3
+    assert s3["classified"] == 3 and s3["surfaced"] == 3
     async with db_factory() as session:
-        remaining = (
-            await session.execute(select(RawPost).where(RawPost.classified_at.is_(None)))
-        ).scalars().all()
-        assert remaining == []
+        leads = (await session.execute(select(Lead))).scalars().all()
+        assert len(leads) == 4  # every burst post became a surfaced lead
         kinds = set((await session.execute(select(Event.kind))).scalars().all())
         assert "classifier_breaker_closed" in kinds

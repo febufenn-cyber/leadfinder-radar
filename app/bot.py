@@ -9,7 +9,8 @@ everyone else.
 
 Callback data grammar (≤64 bytes): "a:<action>:<arg>:<lead_id>"
   a:send:A:12    approve variant A of lead 12
-  a:edit:_:12    ask for an edited text (ForceReply)
+  a:edit:_:12    pick which variant to edit (second keyboard: a:ed2:<variant>:12)
+  a:ed2:B:12     ForceReply prompt for an edited variant-B text
   a:skip:_:12    skip lead 12
   a:mutekw:_:12  choose which matched keyword to mute (second keyboard: a:mk:<idx>:12)
   a:mutecomm:_:12  mute the lead's community for its pack
@@ -40,7 +41,8 @@ log = logging.getLogger(__name__)
 logging.basicConfig(level="INFO", format="%(asctime)s %(levelname)s %(name)s: %(message)s")
 logging.getLogger("httpx").setLevel(logging.WARNING)
 
-_EDIT_PROMPT_RE = re.compile(r"lead #(\d+)")
+# must NOT match copy-confirmation or skip messages — only the ed2 ForceReply prompt
+_EDIT_PROMPT_RE = re.compile(r"edited text for lead #(\d+) variant ([ABC])")
 
 
 def _authorized(update: Update) -> bool:
@@ -89,9 +91,34 @@ async def on_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
                 payload = await approve(session, lead_id, arg)
                 await _say(update, context, _copy_message(payload), parse_mode="HTML")
             elif action == "edit":
+                from sqlalchemy import select
+
+                from app.models.draft import Draft
+
+                variants = (
+                    await session.execute(
+                        select(Draft.variant)
+                        .where(Draft.lead_id == lead_id)
+                        .order_by(Draft.variant)
+                    )
+                ).scalars().all()
+                if not variants:
+                    await _say(update, context, f"lead #{lead_id} has no drafts to edit.")
+                    return
+                buttons = [
+                    [
+                        InlineKeyboardButton(f"Edit {v}", callback_data=f"a:ed2:{v}:{lead_id}")
+                        for v in variants
+                    ]
+                ]
+                await _say(
+                    update, context, "Edit which variant?",
+                    reply_markup=InlineKeyboardMarkup(buttons),
+                )
+            elif action == "ed2":
                 await _say(
                     update, context,
-                    f"Reply to THIS message with your edited text for lead #{lead_id}.",
+                    f"Reply to THIS message with your edited text for lead #{lead_id} variant {arg}.",
                     reply_markup=ForceReply(selective=True),
                 )
             elif action == "skip":
@@ -142,11 +169,11 @@ async def on_edit_reply(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
     m = _EDIT_PROMPT_RE.search(msg.reply_to_message.text)
     if not m:
         return
-    lead_id = int(m.group(1))
+    lead_id, variant = int(m.group(1)), m.group(2)
     factory = get_session_factory()
     try:
         async with factory() as session:
-            payload = await save_edit(session, lead_id, msg.text or "")
+            payload = await save_edit(session, lead_id, msg.text or "", variant=variant)
         await msg.reply_html(_copy_message(payload))
     except ApprovalError as exc:
         await msg.reply_text(f"⚠️ {exc}")

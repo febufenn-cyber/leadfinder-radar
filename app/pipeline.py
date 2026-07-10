@@ -157,32 +157,32 @@ def _is_muted(muted: set[tuple[str | None, str]], pack_name: str, value: str) ->
 async def _push_approval_card(session, notifier, pack_name, np, lead, variants, score, summary):
     """Outbox delivery: the lead is already committed as 'drafted'; marking
     approval_pushed_at only after a successful send makes the push retryable
-    without duplicating leads."""
+    without duplicating leads (at-least-once: a lost-response duplicate card
+    is benign — the second approve fails cleanly)."""
     card, buttons = format_approval_card(
         np, pack_name, np.matched_keywords, score, variants, lead.id
     )
+    now = datetime.now(UTC)
     if await notifier.send_with_buttons(card, buttons):
-        now = datetime.now(UTC)
         lead.approval_pushed_at = now
         np.alerted_at = now
-        summary["alerted"] += 1
+        summary["pushed"] += 1
         session.add(Event(kind="approval_pushed", payload={"lead_id": lead.id, "pack": pack_name}))
     else:
+        lead.updated_at = now  # rotate to the back of the retry queue
         session.add(Event(kind="alert_failed", payload={"lead_id": lead.id, "pack": pack_name}))
     await session.commit()
 
 
-async def _retry_unpushed_cards(session, notifier, pack, summary) -> None:
+async def _retry_unpushed_cards(session, notifier, summary) -> None:
+    # ordered by updated_at with failed pushes re-stamped: leads 11+ rotate in
+    # instead of starving behind ten permanently-failing cards
     rows = (
         await session.execute(
             select(Lead, RawPost)
             .join(RawPost, RawPost.id == Lead.raw_post_id)
-            .where(
-                Lead.pack == pack.name,
-                Lead.status == "drafted",
-                Lead.approval_pushed_at.is_(None),
-            )
-            .order_by(Lead.id)
+            .where(Lead.status == "drafted", Lead.approval_pushed_at.is_(None))
+            .order_by(Lead.updated_at)
             .limit(10)
         )
     ).all()
@@ -193,7 +193,107 @@ async def _retry_unpushed_cards(session, notifier, pack, summary) -> None:
             )
         ).scalars().all()
         score = LeadScore.model_validate(np.score) if np.score else None
-        await _push_approval_card(session, notifier, pack.name, np, lead, drafts, score, summary)
+        await _push_approval_card(session, notifier, lead.pack, np, lead, drafts, score, summary)
+
+
+_DRAFT_MAX_ATTEMPTS = 3
+_DRAFT_BATCH = 3
+
+
+async def run_draft_cycle(
+    *,
+    session_factory=None,
+    notifier=None,
+    packs=None,
+    draft_fn=None,
+) -> dict:
+    """Draft surfaced leads and deliver approval cards (decoupled from polling).
+
+    Runs on its own cron. Attempt-capped: after _DRAFT_MAX_ATTEMPTS failures the
+    lead falls back to a plain scored alert instead of re-spending Sonnet forever.
+    Sessions stay short — no transaction is open while the LLM runs.
+    """
+    settings = get_settings()
+    session_factory = session_factory or get_session_factory()
+    notifier = notifier or get_notifier(settings)
+    packs = packs if packs is not None else load_packs(_resolve_packs_dir(settings.PACKS_DIR))
+    draft_fn = draft_fn or _default_draft
+    packs_by_name = {p.name: p for p in packs}
+    summary = {"drafted": 0, "pushed": 0, "draft_failed": 0, "fallback_alerts": 0, "alerted": 0}
+
+    async with session_factory() as session:
+        candidates = (
+            await session.execute(
+                select(Lead.id).where(
+                    Lead.status == "surfaced", Lead.draft_attempts < _DRAFT_MAX_ATTEMPTS
+                ).order_by(Lead.id).limit(_DRAFT_BATCH)
+            )
+        ).scalars().all()
+
+    for lead_id in candidates:
+        async with session_factory() as session:
+            lead = await session.get(Lead, lead_id)
+            np = await session.get(RawPost, lead.raw_post_id)
+            pack = packs_by_name.get(lead.pack)
+            if pack is None or np is None or not np.score:
+                log.warning("lead %s undraftable (pack gone or unscored) — skipping", lead_id)
+                lead.draft_attempts = _DRAFT_MAX_ATTEMPTS
+                await session.commit()
+                continue
+            score = LeadScore.model_validate(np.score)
+            row = {
+                "community": np.community,
+                "author_handle": np.author_handle,
+                "title": np.title,
+                "text": np.text,
+                "raw_post_id": np.id,
+            }
+            variants = None
+            try:
+                # session has no SQL issued yet -> no transaction idles under the LLM
+                variants = await draft_fn(session, pack, row, score, lead.id)
+            except Exception:
+                log.exception("draft_fn raised (lead_id=%s)", lead.id)
+                session.add(
+                    Event(kind="draft_failed", payload={"lead_id": lead.id, "reason": "exception"})
+                )
+
+            if variants:
+                transition(lead, "drafted")
+                summary["drafted"] += 1
+                for v in variants:
+                    session.add(
+                        Draft(
+                            lead_id=lead.id,
+                            variant=v.variant,
+                            channel=v.channel,
+                            text=v.text,
+                            risk_flags=v.risk_flags,
+                        )
+                    )
+                await session.commit()  # outbox: durable before the push
+                await _push_approval_card(
+                    session, notifier, lead.pack, np, lead, variants, score, summary
+                )
+                continue
+
+            lead.draft_attempts += 1
+            summary["draft_failed"] += 1
+            if lead.draft_attempts >= _DRAFT_MAX_ATTEMPTS:
+                # give up on drafting; the lead still reaches the phone as a plain card
+                card = format_alert(np, lead.pack, np.matched_keywords, score=score)
+                await _send_and_mark(session, notifier, np, lead.pack, card, summary)
+                summary["fallback_alerts"] += 1
+                session.add(Event(kind="draft_gave_up", payload={"lead_id": lead.id}))
+            await session.commit()
+
+    # outbox retry: drafted leads whose card never reached Telegram
+    async with session_factory() as session:
+        await _retry_unpushed_cards(session, notifier, summary)
+
+    if any(summary.values()):
+        log.info("draft cycle done %s", summary)
+    return summary
 
 
 async def _send_and_mark(session, notifier, np, pack_name: str, card: str, summary: dict) -> None:
@@ -212,17 +312,16 @@ async def run_poll_cycle(
     packs=None,
     poll_fn=None,
     classify_fn=None,
-    draft_fn=None,
     breaker: ClassifierBreaker | None = None,
 ) -> dict:
-    """Poll every enabled pack once. Returns summary counts."""
+    """Poll every enabled pack once (fetch -> filter -> dedup -> classify ->
+    threshold -> surfaced lead rows). Drafting/push happens in run_draft_cycle."""
     settings = get_settings()
     session_factory = session_factory or get_session_factory()
     notifier = notifier or get_notifier(settings)
     packs = packs if packs is not None else load_packs(_resolve_packs_dir(settings.PACKS_DIR))
     poll_fn = poll_fn or select_poll_fn(settings)
     classify_fn = classify_fn or _default_classify
-    draft_fn = draft_fn or _default_draft
     breaker = breaker or _breaker
     muted = await _load_mutes(session_factory)
     if not packs:
@@ -343,42 +442,12 @@ async def run_poll_cycle(
                         continue
                     summary["surfaced"] += 1
 
-                    # surfaced -> lead -> drafts (tier standard) -> approval card
-                    lead = Lead(raw_post_id=np.id, pack=pack.name)
-                    session.add(lead)
-                    await session.flush()
-                    variants = None
-                    try:
-                        variants = await draft_fn(
-                            session, pack, row | {"raw_post_id": np.id}, score, lead.id
-                        )
-                    except Exception:
-                        log.exception("draft_fn raised (lead_id=%s)", lead.id)
-                    if variants:
-                        transition(lead, "drafted")
-                        for v in variants:
-                            session.add(
-                                Draft(
-                                    lead_id=lead.id,
-                                    variant=v.variant,
-                                    channel=v.channel,
-                                    text=v.text,
-                                    risk_flags=v.risk_flags,
-                                )
-                            )
-                        await session.commit()  # outbox: durable before the push
-                        await _push_approval_card(
-                            session, notifier, pack.name, np, lead, variants, score, summary
-                        )
-                    else:
-                        # degrade: plain scored alert so the lead still reaches the phone
-                        card = format_alert(np, pack.name, np.matched_keywords, score=score)
-                        await _send_and_mark(session, notifier, np, pack.name, card, summary)
+                    # surfaced -> lead row only. Drafting (~3 min of Sonnet per lead)
+                    # is decoupled into run_draft_cycle so a lead burst can't stall
+                    # polling freshness (DESIGN §0: 2-5 min post-to-phone).
+                    session.add(Lead(raw_post_id=np.id, pack=pack.name))
                     await session.commit()  # short transactions: one lead at a time
                 await session.commit()
-
-                # outbox retry: drafted leads whose card never reached Telegram
-                await _retry_unpushed_cards(session, notifier, pack, summary)
 
     duration_ms = int((time.monotonic() - started) * 1000)
     async with session_factory() as session:

@@ -11,7 +11,7 @@ from arq import cron
 from arq.connections import RedisSettings
 
 from app.core.config import get_settings
-from app.pipeline import run_poll_cycle
+from app.pipeline import run_draft_cycle, run_poll_cycle
 
 logging.basicConfig(
     level=get_settings().LOG_LEVEL,
@@ -23,6 +23,10 @@ logging.getLogger("httpx").setLevel(logging.WARNING)
 
 async def poll_job(ctx: dict) -> dict:
     return await run_poll_cycle()
+
+
+async def draft_job(ctx: dict) -> dict:
+    return await run_draft_cycle()
 
 
 _settings = get_settings()
@@ -42,6 +46,13 @@ class WorkerSettings:
             minute=set(range(0, 60, _settings.POLL_INTERVAL_MINUTES)),
             run_at_startup=True,
             unique=True,  # a long cycle delays the next tick instead of overlapping it
-            timeout=1800,  # sonnet drafting runs ~3 min per surfaced lead
-        )
+            timeout=600,  # classify only (~13s/lead typical); drafting is decoupled
+        ),
+        cron(
+            draft_job,
+            second=30,  # every minute, offset from the poll tick
+            run_at_startup=True,
+            unique=True,
+            timeout=1800,  # sonnet drafting runs ~3 min per lead, batch of 3
+        ),
     ]

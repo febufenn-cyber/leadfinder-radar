@@ -84,16 +84,19 @@ async def approve(session: AsyncSession, lead_id: int, variant: str) -> CopyPayl
     )
 
 
-async def save_edit(session: AsyncSession, lead_id: int, new_text: str) -> CopyPayload:
-    """Owner replied with edited text: store as gold sample, then approve it."""
+async def save_edit(
+    session: AsyncSession, lead_id: int, new_text: str, variant: str | None = None
+) -> CopyPayload:
+    """Owner replied with edited text for a SPECIFIC variant: store as gold
+    sample, then approve it. Editing the wrong variant would poison the gold
+    set, so callers should always pass the variant the owner picked."""
     await _get_lead(session, lead_id)  # existence check; approve() re-validates state
-    draft = (
-        await session.execute(
-            select(Draft).where(Draft.lead_id == lead_id).order_by(Draft.variant)
-        )
-    ).scalars().first()
+    query = select(Draft).where(Draft.lead_id == lead_id).order_by(Draft.variant)
+    if variant is not None:
+        query = query.where(Draft.variant == variant)
+    draft = (await session.execute(query)).scalars().first()
     if draft is None:
-        raise ApprovalError(f"lead #{lead_id} has no drafts to edit")
+        raise ApprovalError(f"lead #{lead_id} has no draft {variant or ''} to edit")
     draft.edited_text = new_text.strip()
     draft.is_gold = True  # the learning loop's gold set (DESIGN §3.6/§6)
     await session.flush()

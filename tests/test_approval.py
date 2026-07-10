@@ -56,18 +56,30 @@ async def test_approve_unknown_variant_or_lead(db_session):
         await approve(db_session, 99999, "A")
 
 
-async def test_save_edit_stores_gold_and_approves(db_session):
+async def test_save_edit_stores_gold_on_the_chosen_variant(db_session):
+    """Editing B must gold-stamp B — stamping A would poison the gold set."""
     lead = await make_drafted_lead(db_session)
-    payload = await save_edit(db_session, lead.id, "  my own words  ")
+    payload = await save_edit(db_session, lead.id, "  my own words  ", variant="B")
     assert payload.text == "my own words"
+    assert payload.variant == "B"
     assert lead.status == "sent"
-    draft = (
+    draft_b = (
+        await db_session.execute(select(Draft).where(Draft.variant == "B"))
+    ).scalars().one()
+    assert draft_b.is_gold is True
+    assert draft_b.edited_text == "my own words"
+    draft_a = (
         await db_session.execute(select(Draft).where(Draft.variant == "A"))
     ).scalars().one()
-    assert draft.is_gold is True
-    assert draft.edited_text == "my own words"
+    assert draft_a.is_gold is False  # untouched
     events = (await db_session.execute(select(Event).where(Event.kind == "approval"))).scalars().all()
     assert events[0].payload["edited"] is True
+
+
+async def test_save_edit_unknown_variant_fails(db_session):
+    lead = await make_drafted_lead(db_session)
+    with pytest.raises(ApprovalError):
+        await save_edit(db_session, lead.id, "text", variant="C")
 
 
 async def test_skip_marks_skipped(db_session):
