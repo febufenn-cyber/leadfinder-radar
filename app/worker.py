@@ -41,7 +41,7 @@ class WorkerSettings:
             poll_job,
             minute=set(range(0, 60, _settings.POLL_INTERVAL_MINUTES)),
             run_at_startup=True,
-            unique=True,
-            timeout=300,
+            unique=True,  # a long cycle delays the next tick instead of overlapping it
+            timeout=1800,  # sonnet drafting runs ~3 min per surfaced lead
         )
     ]

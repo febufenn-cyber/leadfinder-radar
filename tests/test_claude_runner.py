@@ -82,6 +82,16 @@ async def test_unparseable_payload_returns_none_but_keeps_usage(db_factory):
     assert call.input_tokens == 100  # usage still audited
 
 
+async def test_json_with_raw_newlines_in_strings_is_repaired(db_factory):
+    raw = '{"variants": [{"text": "line one\nline two\n\ttabbed"}]}'
+    runner = FakeRunner(result_event=ok_event(raw))
+    runner.audit_factory = db_factory
+    payload = await runner.run_json(
+        purpose="draft", system_prompt="s", user_prompt="u", tier="standard"
+    )
+    assert payload == {"variants": [{"text": "line one\nline two\n\ttabbed"}]}
+
+
 async def test_json_extracted_from_prose_wrapper(db_factory):
     runner = FakeRunner(result_event=ok_event('Here you go:\n{"a": 1}\nHope that helps!'))
     runner.audit_factory = db_factory

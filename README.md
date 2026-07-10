@@ -37,7 +37,21 @@ uv run alembic upgrade head
 uv run python scripts/poll_once.py           # one manual poll cycle
 uv run arq app.worker.WorkerSettings         # continuous: polls every 2 min
 uv run uvicorn app.main:app --port 8100      # dashboard: http://localhost:8100
+uv run python -m app.bot                     # approval bot (needs TELEGRAM_* set)
 ```
+
+## The approval flow (M2, copy-mode)
+
+A surfaced lead (fit ≥ pack threshold) is drafted by Sonnet into 2–3 variants and
+lands on your phone as a card with buttons: `Send A/B/C · Edit · Skip · Mute keyword ·
+Mute community`. **Send returns the text + thread link for you to copy and post
+manually from your own account** — nothing is ever posted automatically (API-send
+with guardrails is M4). Edits you make become gold samples for prompt tuning.
+
+Before working real leads, fill in the owner-truth files (drafts stay claim-free
+until you do): `packs/personas/robofox_web.yaml` (true facts only) and
+`packs/fewshots/robofox_web.yaml` (replace starter examples with ~10 real
+positives + ~10 near-misses).
 
 ## Telegram setup (2 minutes)
 

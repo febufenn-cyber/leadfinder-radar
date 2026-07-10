@@ -40,10 +40,34 @@ _FENCE_RE = re.compile(r"^```[a-zA-Z]*\s*|\s*```$")
 _SECRET_RE = re.compile(r"(sk-ant-[A-Za-z0-9_\-]{8,}|Bearer\s+\S+)")
 
 
+def _escape_ctrl_in_strings(s: str) -> str:
+    """Escape raw newlines/tabs INSIDE string literals — LLMs writing multi-line
+    reply text emit them constantly, and json.loads rejects them."""
+    out: list[str] = []
+    in_str = esc = False
+    for ch in s:
+        if in_str:
+            if esc:
+                esc = False
+            elif ch == "\\":
+                esc = True
+            elif ch == '"':
+                in_str = False
+            elif ch in "\n\r\t":
+                out.append({"\n": "\\n", "\r": "\\r", "\t": "\\t"}[ch])
+                continue
+        elif ch == '"':
+            in_str = True
+        out.append(ch)
+    return "".join(out)
+
+
 def _extract_json(text: str) -> dict | None:
-    """Best-effort JSON object extraction: strip fences, else first {...} span."""
+    """Best-effort JSON object extraction: strip fences, take the {...} span,
+    and repair raw control characters inside strings."""
     candidate = _FENCE_RE.sub("", text.strip())
-    for attempt in (candidate, candidate[candidate.find("{") : candidate.rfind("}") + 1]):
+    span = candidate[candidate.find("{") : candidate.rfind("}") + 1]
+    for attempt in (candidate, span, _escape_ctrl_in_strings(span)):
         if not attempt:
             continue
         try:
@@ -160,7 +184,8 @@ class ClaudeRunner:
                 cost = _extract_cost(result_event)
                 payload = _extract_json(result_event.get("result", ""))
                 if payload is None:
-                    error = "result text was not a valid JSON object"
+                    head = result_event.get("result", "")[:200]
+                    error = f"result text was not a valid JSON object; head: {head!r}"
         except Exception as exc:  # audit row must survive anything
             error = f"runner exception: {exc!r}"
         finally:

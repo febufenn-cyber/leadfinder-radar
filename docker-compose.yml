@@ -64,6 +64,22 @@ services:
         condition: service_healthy
     restart: unless-stopped
 
+  bot:
+    build: .
+    container_name: leadfinder-bot
+    profiles: ["app"]
+    command: ["uv", "run", "python", "-m", "app.bot"]
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      DATABASE_URL: postgresql+asyncpg://leadfinder:leadfinder@postgres:5432/leadfinder
+      REDIS_URL: redis://redis:6379/0
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: unless-stopped
+
   dashboard:
     build: .
     container_name: leadfinder-dashboard

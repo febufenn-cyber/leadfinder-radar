@@ -86,7 +86,7 @@ async def approve(session: AsyncSession, lead_id: int, variant: str) -> CopyPayl
 
 async def save_edit(session: AsyncSession, lead_id: int, new_text: str) -> CopyPayload:
     """Owner replied with edited text: store as gold sample, then approve it."""
-    lead = await _get_lead(session, lead_id)
+    await _get_lead(session, lead_id)  # existence check; approve() re-validates state
     draft = (
         await session.execute(
             select(Draft).where(Draft.lead_id == lead_id).order_by(Draft.variant)

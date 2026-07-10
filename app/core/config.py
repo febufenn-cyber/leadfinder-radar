@@ -47,6 +47,7 @@ class Settings(BaseSettings):
     CLAUDE_FAST_MODEL: str = "claude-haiku-4-5-20251001"
     CLAUDE_STANDARD_MODEL: str = "claude-sonnet-4-6"
     CLASSIFY_TIMEOUT_SECONDS: int = 90
+    DRAFT_TIMEOUT_SECONDS: int = 240  # sonnet writing 2-3 variants is slower than haiku
 
 
 @lru_cache
