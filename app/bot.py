@@ -64,6 +64,12 @@ def _copy_message(payload) -> str:
     )
 
 
+async def _say(update: Update, context: ContextTypes.DEFAULT_TYPE, text: str, **kwargs) -> None:
+    """query.message can be None for aged/inaccessible messages — always send
+    via the chat id instead of replying to the card."""
+    await context.bot.send_message(chat_id=update.effective_chat.id, text=text, **kwargs)
+
+
 async def on_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if not _authorized(update):
         log.warning("ignoring callback from unauthorized chat %s", update.effective_chat)
@@ -81,27 +87,29 @@ async def on_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
         async with factory() as session:
             if action == "send":
                 payload = await approve(session, lead_id, arg)
-                await query.message.reply_html(_copy_message(payload))
+                await _say(update, context, _copy_message(payload), parse_mode="HTML")
             elif action == "edit":
-                await query.message.reply_text(
+                await _say(
+                    update, context,
                     f"Reply to THIS message with your edited text for lead #{lead_id}.",
                     reply_markup=ForceReply(selective=True),
                 )
             elif action == "skip":
                 await skip(session, lead_id)
-                await query.message.reply_text(f"⏭ Skipped lead #{lead_id}.")
+                await _say(update, context, f"⏭ Skipped lead #{lead_id}.")
             elif action == "mutekw":
                 _, post = await _lead_post(session, lead_id)
                 keywords = (post.matched_keywords or []) if post else []
                 if not keywords:
-                    await query.message.reply_text("No matched keywords on this lead.")
+                    await _say(update, context, "No matched keywords on this lead.")
                     return
                 buttons = [
                     [InlineKeyboardButton(kw, callback_data=f"a:mk:{i}:{lead_id}")]
                     for i, kw in enumerate(keywords[:8])
                 ]
-                await query.message.reply_text(
-                    "Mute which keyword?", reply_markup=InlineKeyboardMarkup(buttons)
+                await _say(
+                    update, context, "Mute which keyword?",
+                    reply_markup=InlineKeyboardMarkup(buttons),
                 )
             elif action == "mk":
                 lead, post = await _lead_post(session, lead_id)
@@ -110,18 +118,18 @@ async def on_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
                 if lead and 0 <= idx < len(keywords):
                     added = await add_mute(session, "keyword", keywords[idx], lead.pack)
                     note = "muted" if added else "was already muted"
-                    await query.message.reply_text(f"🔇 keyword “{keywords[idx]}” {note}.")
+                    await _say(update, context, f"🔇 keyword “{keywords[idx]}” {note}.")
             elif action == "mutecomm":
                 lead, post = await _lead_post(session, lead_id)
                 if lead and post and post.community:
                     added = await add_mute(session, "community", post.community, lead.pack)
                     note = "muted" if added else "was already muted"
-                    await query.message.reply_text(f"🔇 r/{post.community} {note} for {lead.pack}.")
+                    await _say(update, context, f"🔇 r/{post.community} {note} for {lead.pack}.")
     except ApprovalError as exc:
-        await query.message.reply_text(f"⚠️ {exc}")
+        await _say(update, context, f"⚠️ {exc}")
     except Exception:
         log.exception("callback handler failed (data=%s)", query.data)
-        await query.message.reply_text("⚠️ something broke — check the bot logs.")
+        await _say(update, context, "⚠️ something broke — check the bot logs.")
 
 
 async def on_edit_reply(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:

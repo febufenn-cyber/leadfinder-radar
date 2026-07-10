@@ -83,21 +83,33 @@ def format_approval_card(
     """
     community = f"r/{post.community}" if post.community else post.source
     fit = f" · ⭐ {score.fit_score}" if score is not None else ""
-    lines = [
+    header = [
         f"🎯 <b>[{html.escape(pack_name)}]</b> {html.escape(community)}"
         f" · {_age_str(post.created_at)}{fit}",
         f"<b>{html.escape((post.title or '(no title)')[:300])}</b>",
     ]
     if score is not None:
-        lines.append(f"<i>{html.escape(score.one_line_summary[:200])}</i>")
-        lines.append(html.escape(f"{score.intent} · {score.urgency} · budget: {score.budget_signal}"))
-    lines.append(html.escape(post.url))
-    for v in variants:
-        flags = f" ⚠️ {', '.join(v.risk_flags)}" if v.risk_flags else ""
-        text = v.text if len(v.text) <= 900 else v.text[:900] + "… (trimmed — full text on send)"
-        lines.append(f"\n<b>— {v.variant} ({html.escape(v.channel)}){html.escape(flags)}</b>")
-        lines.append(html.escape(text))
-    card = "\n".join(lines)[:_TELEGRAM_LIMIT]
+        header.append(f"<i>{html.escape(score.one_line_summary[:200])}</i>")
+        header.append(html.escape(f"{score.intent} · {score.urgency} · budget: {score.budget_signal}"))
+    header.append(html.escape(post.url))
+
+    # Never slice the assembled card: a blind cut can bisect an HTML tag and
+    # Telegram rejects the whole message (which the outbox would retry forever).
+    # Shrink the per-variant cap until the card fits.
+    card = ""
+    for cap in (900, 600, 400, 250, 120):
+        lines = list(header)
+        for v in variants:
+            flags_text = ", ".join(v.risk_flags)[:150]  # LLM flags can be paragraphs
+            flags = f" ⚠️ {flags_text}…" if len(flags_text) == 150 else (
+                f" ⚠️ {flags_text}" if flags_text else ""
+            )
+            text = v.text if len(v.text) <= cap else v.text[:cap] + "… (trimmed — full text on send)"
+            lines.append(f"\n<b>— {v.variant} ({html.escape(v.channel)}){html.escape(flags)}</b>")
+            lines.append(html.escape(text))
+        card = "\n".join(lines)
+        if len(card) <= _TELEGRAM_LIMIT:
+            break
 
     send_row = [
         {"text": f"Send {v.variant}", "callback_data": f"a:send:{v.variant}:{lead_id}"}
