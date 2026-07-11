@@ -1,0 +1,8 @@
+{
+  "name": "leadfinder-leads-proxy",
+  "main": "worker.js",
+  "compatibility_date": "2026-06-01",
+  "routes": [{ "pattern": "leadfinder.robofox.online", "custom_domain": true }],
+  "kv_namespaces": [{ "binding": "CONFIG", "id": "9fd55989d8004250bfdbb410ac278dbe" }],
+  "vars": { "BASIC_USER": "febin" }
+}
