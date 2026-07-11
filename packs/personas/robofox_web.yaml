@@ -1,15 +1,15 @@
 # Persona block for robofox_web drafts (DESIGN §3.5).
 #
-# ⚠️ OWNER ACTION REQUIRED: fill `facts` with TRUE, owner-written statements only.
-# The drafting prompt is forbidden from claiming anything not listed here —
-# with an empty list, drafts make ZERO claims about you or your business
-# (pure helpful-first replies). Never invent track record.
-#
-# Examples of good facts (write your own, only if true):
-#   - "I run Robofox, a small web studio based in Madurai, India."
-#   - "We build small-business sites and landing pages, usually delivered in 1-2 weeks."
-facts: []
+# Every fact below is backed by robofox.online's public copy or live infra —
+# nothing invented. Febin: extend freely, but never add track-record claims
+# you can't defend (no client counts, no revenue claims, no "we've done 50").
+facts:
+  - I run RoboFox (robofox.online), a web & AI studio based in Madurai, India.
+  - We build fast, modern websites — landing pages through full web apps — typically shipped in weeks, not months.
+  - We also build AI chatbots for customer support and bookings, and AI-powered lead-gen tools.
+  - I ship my own products end-to-end — e.g. LeadFinder (leads.robofox.online), an AI lead-list tool with a public API.
+  - Typical stack is React/Next.js on the front, Python/FastAPI and Postgres behind, deployed on Cloudflare or a cloud VPS.
+  - How we work — one call to scope it, we build, test and deploy, and you own the code at handoff.
 
-# Optional one-line availability note appended ONLY where community rules allow
-# a soft pitch (empty = never pitch).
-availability_line: ""
+# Appended ONLY where community rules allow a soft pitch (DESIGN §3.5).
+availability_line: "I run a small web studio (robofox.online) — happy to take a look and give you a straight read on scope and cost, no strings."

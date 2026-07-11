@@ -1,12 +1,10 @@
 # Persona block for zervvo_abroad drafts (DESIGN §3.5).
 #
-# ⚠️ OWNER ACTION REQUIRED: fill `facts` with TRUE, owner-written statements only.
-# With an empty list, drafts make ZERO claims about Zervvo — pure helpful-first
-# replies. Never invent track record.
-#
-# Examples of good facts (write your own, only if true):
-#   - "I run Zervvo, a study-abroad consultancy working with Indian students."
-#   - "We handle Germany/UK/Canada applications end-to-end including visa filing."
-facts: []
+# Intentionally minimal: only Febin can state Zervvo's real track record.
+# Extend with numbers you can defend (students placed, visa success rate,
+# years running) — the drafter may claim ONLY what is written here.
+facts:
+  - I work with Zervvo, a study-abroad consultancy for Indian students targeting Germany, the UK, and Canada.
+  - Zervvo guides students end-to-end over WhatsApp — university shortlisting, applications, IELTS prep, and visa paperwork.
 
-availability_line: ""
+availability_line: "I work with Zervvo — study-abroad guidance for Indian students over WhatsApp. Happy to point you in the right direction if useful."
