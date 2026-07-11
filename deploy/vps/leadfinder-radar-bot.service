@@ -1,0 +1,17 @@
+[Unit]
+Description=LeadFinder radar Telegram bot (approval buttons + commands)
+After=network-online.target postgresql.service
+Wants=network-online.target
+
+[Service]
+User=ubuntu
+WorkingDirectory=/opt/leadfinder-radar
+ExecStart=/home/ubuntu/.local/bin/uv run python -m app.bot
+Restart=always
+RestartSec=10
+MemoryMax=250M
+StandardOutput=append:/opt/leadfinder-radar/logs/bot.log
+StandardError=append:/opt/leadfinder-radar/logs/bot.log
+
+[Install]
+WantedBy=multi-user.target
