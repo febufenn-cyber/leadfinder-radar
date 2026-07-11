@@ -52,10 +52,14 @@ async def approve(session: AsyncSession, lead_id: int, variant: str) -> CopyPayl
     """Owner tapped [Send X]: approval event FIRST, then drafted -> sent."""
     lead = await _get_lead(session, lead_id)
     draft = (
-        await session.execute(
-            select(Draft).where(Draft.lead_id == lead_id, Draft.variant == variant)
+        (
+            await session.execute(
+                select(Draft).where(Draft.lead_id == lead_id, Draft.variant == variant)
+            )
         )
-    ).scalars().first()
+        .scalars()
+        .first()
+    )
     if draft is None:
         raise ApprovalError(f"lead #{lead_id} has no variant {variant}")
 
@@ -104,9 +108,7 @@ async def save_edit(
     return await approve(session, lead_id, draft.variant)
 
 
-async def queue_send(
-    session: AsyncSession, lead_id: int, variant: str, rng=None
-) -> Send:
+async def queue_send(session: AsyncSession, lead_id: int, variant: str, rng=None) -> Send:
     """SEND_MODE=api (M4): approval Event FIRST, then a jitter-scheduled sends
     row. The lead stays `drafted` — only a successful post marks it `sent`.
 
@@ -123,10 +125,14 @@ async def queue_send(
     if lead.status != "drafted":
         raise ApprovalError(f"lead #{lead_id} is {lead.status}, not awaiting approval")
     draft = (
-        await session.execute(
-            select(Draft).where(Draft.lead_id == lead_id, Draft.variant == variant)
+        (
+            await session.execute(
+                select(Draft).where(Draft.lead_id == lead_id, Draft.variant == variant)
+            )
         )
-    ).scalars().first()
+        .scalars()
+        .first()
+    )
     if draft is None:
         raise ApprovalError(f"lead #{lead_id} has no variant {variant}")
     if draft.channel == "comment+dm":
@@ -137,10 +143,14 @@ async def queue_send(
     if draft.channel == "dm" and post.source != "reddit":
         raise ApprovalError("DM sends are reddit-only — use copy mode")
     pending = (
-        await session.execute(
-            select(Send).where(Send.lead_id == lead_id, Send.status == "queued")
+        (
+            await session.execute(
+                select(Send).where(Send.lead_id == lead_id, Send.status == "queued")
+            )
         )
-    ).scalars().first()
+        .scalars()
+        .first()
+    )
     if pending is not None:
         raise ApprovalError(
             f"lead #{lead_id} already has send #{pending.id} queued — cancel it first"
@@ -184,11 +194,22 @@ async def queue_send(
 
 
 async def cancel_send(session: AsyncSession, send_id: int) -> bool:
-    """Cancel a still-queued send (the jitter window exists for second thoughts)."""
-    send = await session.get(Send, send_id)
-    if send is None or send.status != "queued":
+    """Cancel a still-queued send (the jitter window exists for second thoughts).
+
+    Atomic UPDATE ... WHERE status='queued': the send cycle claims rows the same
+    way, so exactly one side wins — a cancel can never land on a reply that the
+    worker is already posting.
+    """
+    from sqlalchemy import update
+
+    result = await session.execute(
+        update(Send).where(Send.id == send_id, Send.status == "queued").values(status="cancelled")
+    )
+    if result.rowcount != 1:
+        await session.rollback()
         return False
-    send.status = "cancelled"
+    send = await session.get(Send, send_id)
+    send.status = "cancelled"  # sync the ORM object for callers holding it
     session.add(Event(kind="send_cancelled", payload={"send_id": send_id, "lead_id": send.lead_id}))
     await session.commit()
     return True

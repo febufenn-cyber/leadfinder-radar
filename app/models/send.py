@@ -28,7 +28,9 @@ class Send(Base):
     community: Mapped[str | None] = mapped_column(Text)  # for per-sub cooldown
     text: Mapped[str] = mapped_column(Text)
     status: Mapped[str] = mapped_column(Text, default="queued")
-    # queued | sent | failed | halted | cancelled
+    # queued | executing | sent | failed | halted | cancelled
+    # 'executing' is the crash-safety marker: claimed-and-committed BEFORE the
+    # API call so an interrupted send can never be re-posted (§0).
     scheduled_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
     sent_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     external_result_id: Mapped[str | None] = mapped_column(Text)  # posted comment id

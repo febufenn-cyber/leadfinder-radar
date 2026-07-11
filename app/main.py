@@ -190,7 +190,8 @@ async def sends_view() -> str:
         for h in halts
     )
     status_icon = {
-        "queued": "⏱", "sent": "✅", "failed": "⚠️", "halted": "🛑", "cancelled": "✖️",
+        "queued": "⏱", "executing": "🚀", "sent": "✅",
+        "failed": "⚠️", "halted": "🛑", "cancelled": "✖️",
     }
     body = "\n".join(
         f"<tr><td>{s.id}</td><td>{status_icon.get(s.status, '')} {html.escape(s.status)}</td>"

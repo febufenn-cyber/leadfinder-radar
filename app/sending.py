@@ -11,6 +11,7 @@ import logging
 from datetime import UTC, datetime
 
 import httpx
+from sqlalchemy import select, update
 
 from app.core.config import get_settings
 from app.db.session import get_session_factory
@@ -36,9 +37,7 @@ async def _execute(send: Send, client: httpx.AsyncClient) -> tuple[bool, str | N
         if reddit is None:
             return False, None, "reddit user credentials not configured (REDDIT_USERNAME/PASSWORD)"
         if send.channel == "dm":
-            return await reddit.send_dm(
-                client, send.recipient, "re: your post", send.text
-            )
+            return await reddit.send_dm(client, send.recipient, "re: your post", send.text)
         return await reddit.post_comment(client, send.target_external_id, send.text)
     if send.platform == "threads":
         from app.senders.threads_send import post_reply
@@ -65,14 +64,39 @@ async def run_send_cycle(
     now = now or datetime.now(UTC)
 
     async with session_factory() as session:
-        due = (
-            (
-                await session.execute(
-                    Send.__table__.select()
-                    .where(Send.status == "queued", Send.scheduled_at <= now)
-                    .order_by(Send.scheduled_at)
-                    .limit(_BATCH)
+        # Crash recovery: an 'executing' row at cycle start means a previous cycle
+        # died between the API call and its commit — the reply may or may not be
+        # live. NEVER re-execute it (that's the double-post); fail it and make the
+        # owner look at the thread.
+        orphans = (
+            (await session.execute(select(Send).where(Send.status == "executing"))).scalars().all()
+        )
+        for orphan in orphans:
+            orphan.status = "failed"
+            orphan.error = (
+                "worker crashed mid-execution — the reply MAY already be live; "
+                "check the thread before re-approving"
+            )
+            summary["failed"] += 1
+            session.add(
+                Event(
+                    kind="send_orphaned",
+                    payload={"send_id": orphan.id, "lead_id": orphan.lead_id},
                 )
+            )
+            await notifier.send(
+                f"⚠️ send #{orphan.id} (lead #{orphan.lead_id}) was interrupted mid-post — "
+                f"check the thread before re-approving."
+            )
+        if orphans:
+            await session.commit()
+
+        due = (
+            await session.execute(
+                Send.__table__.select()
+                .where(Send.status == "queued", Send.scheduled_at <= now)
+                .order_by(Send.scheduled_at)
+                .limit(_BATCH)
             )
         ).all()
         due_ids = [row.id for row in due]
@@ -113,7 +137,29 @@ async def run_send_cycle(
                     await session.commit()
                     continue
 
-                ok, ext_id, error = await (execute_fn or _execute)(send, client)
+                # Atomic claim: exactly one of {this cycle, a bot-side cancel} wins.
+                # The commit lands BEFORE the API call, so a crash after posting
+                # leaves an 'executing' marker — never a re-postable 'queued' row.
+                claimed = await session.execute(
+                    update(Send)
+                    .where(Send.id == send.id, Send.status == "queued")
+                    .values(status="executing")
+                )
+                if claimed.rowcount != 1:
+                    await session.rollback()  # cancelled at the last instant
+                    continue
+                await session.commit()
+                send.status = "executing"
+
+                try:
+                    ok, ext_id, error = await (execute_fn or _execute)(send, client)
+                except Exception as exc:  # outcome unknown — same policy as a crash
+                    log.exception("send %s executor raised", send.id)
+                    ok, ext_id, error = (
+                        False,
+                        None,
+                        f"execution error — the reply MAY be live; check the thread ({exc})",
+                    )
                 if ok:
                     send.status = "sent"
                     send.sent_at = datetime.now(UTC)
