@@ -1,0 +1,16 @@
+[Unit]
+Description=LeadFinder radar Cloudflare quick tunnel + KV origin publisher
+After=network-online.target leadfinder-radar-dashboard.service
+Wants=network-online.target
+
+[Service]
+User=ubuntu
+ExecStart=/bin/bash /opt/leadfinder-radar/deploy/vps/leads_tunnel_vps.sh
+Restart=always
+RestartSec=15
+MemoryMax=200M
+StandardOutput=append:/opt/leadfinder-radar/logs/tunnel-systemd.log
+StandardError=append:/opt/leadfinder-radar/logs/tunnel-systemd.log
+
+[Install]
+WantedBy=multi-user.target

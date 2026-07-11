@@ -1,0 +1,17 @@
+[Unit]
+Description=LeadFinder radar dashboard (server-rendered tables on :8100)
+After=network-online.target postgresql.service
+Wants=network-online.target
+
+[Service]
+User=ubuntu
+WorkingDirectory=/opt/leadfinder-radar
+ExecStart=/home/ubuntu/.local/bin/uv run uvicorn app.main:app --host 127.0.0.1 --port 8100
+Restart=always
+RestartSec=5
+MemoryMax=250M
+StandardOutput=append:/opt/leadfinder-radar/logs/dashboard.log
+StandardError=append:/opt/leadfinder-radar/logs/dashboard.log
+
+[Install]
+WantedBy=multi-user.target

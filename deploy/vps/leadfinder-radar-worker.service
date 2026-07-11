@@ -1,0 +1,18 @@
+[Unit]
+Description=LeadFinder radar arq worker (poll + draft + send + watch cycles)
+After=network-online.target postgresql.service redis-server.service
+Wants=network-online.target
+
+[Service]
+User=ubuntu
+WorkingDirectory=/opt/leadfinder-radar
+ExecStart=/home/ubuntu/.local/bin/uv run arq app.worker.WorkerSettings
+Restart=always
+RestartSec=10
+# claude -p subprocesses spike inside this cgroup; the box has 1GB + 4GB swap
+MemoryMax=700M
+StandardOutput=append:/opt/leadfinder-radar/logs/worker.log
+StandardError=append:/opt/leadfinder-radar/logs/worker.log
+
+[Install]
+WantedBy=multi-user.target
