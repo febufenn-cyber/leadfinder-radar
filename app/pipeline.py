@@ -110,6 +110,11 @@ def select_poll_fn(settings):
         from app.adapters.threads import get_threads_adapter
 
         threads_adapter = get_threads_adapter()
+    cse_adapter = None
+    if settings.GOOGLE_CSE_KEY and settings.GOOGLE_CSE_ID:
+        from app.adapters.threads_cse import get_cse_adapter
+
+        cse_adapter = get_cse_adapter()
 
     async def poll_all(pack, client):
         from app.adapters import hn
@@ -121,6 +126,8 @@ def select_poll_fn(settings):
             posts += await hn.poll(pack, client)
         if threads_adapter and pack.threads.search_queries:
             posts += await threads_adapter.poll(pack, client)
+        if cse_adapter and pack.threads.search_queries:
+            posts += await cse_adapter.poll(pack, client)
         return posts
 
     return poll_all

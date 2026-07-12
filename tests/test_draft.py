@@ -62,14 +62,16 @@ class FakeRunner:
         return self.payload
 
 
-def test_persona_loads_empty_starter():
+def test_persona_loads_filled_file_and_empty_fallback():
+    # robofox_web persona was filled 2026-07-11 (site-backed facts)
     persona = load_persona("robofox_web")
-    assert persona["facts"] == []
+    assert isinstance(persona["facts"], list) and persona["facts"]
+    assert isinstance(persona["availability_line"], str)
     assert load_persona("no_such_pack") == {"facts": [], "availability_line": ""}
 
 
 def test_prompts_forbid_claims_without_persona_and_carry_rules():
-    system, user = build_draft_prompts(PACK, load_persona("robofox_web"),
+    system, user = build_draft_prompts(PACK, load_persona("no_such_pack"),
                                        make_post_row(community="forhire"), SCORE)
     assert "zero claims" in system.lower() or "no persona facts" in system.lower()
     assert "Direct pitch acceptable here." in system

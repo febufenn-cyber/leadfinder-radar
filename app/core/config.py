@@ -47,6 +47,14 @@ class Settings(BaseSettings):
     THREADS_DAILY_QUERY_BUDGET: int = 48
     THREADS_MIN_INTERVAL_MINUTES: int = 15
 
+    # ---- Threads discovery via Google CSE (either empty -> adapter disabled).
+    # Compliant bridge while threads_keyword_search public access sits behind
+    # Meta App Review; leads are copy-mode only. 60-min spacing keeps a
+    # 4-query pack inside the free 100-queries/day tier. ----
+    GOOGLE_CSE_KEY: str = ""
+    GOOGLE_CSE_ID: str = ""
+    GOOGLE_CSE_MIN_INTERVAL_MINUTES: int = 60
+
     # ---- API-send guardrails (M4; DESIGN §3.7 — enforced in code, not prompts) ----
     SEND_MODE: Literal["copy", "api"] = "copy"
     OWNER_TZ: str = "Asia/Kolkata"
