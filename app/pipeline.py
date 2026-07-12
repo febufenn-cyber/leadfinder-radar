@@ -359,6 +359,7 @@ async def run_poll_cycle(
                     f"{post.title or ''}\n{post.text}",
                     pack.keywords.include,
                     pack.keywords.exclude,
+                    pack.keywords.signals,
                 )
                 matched = [k for k in matched if not _is_muted(muted["keyword"], pack.name, k)]
                 if not matched:

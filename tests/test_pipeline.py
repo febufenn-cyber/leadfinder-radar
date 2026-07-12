@@ -150,6 +150,62 @@ async def test_poll_cycle_stores_scores_and_creates_surfaced_lead(db_factory):
         assert lead.draft_attempts == 0
 
 
+SIGNAL_PACK = OfferPack(
+    name="testpack",
+    keywords={
+        "include": ["need a website"],
+        "signals": ["someone to build"],
+        "exclude": ["for free"],
+    },
+)
+
+
+async def test_poll_cycle_surfaces_signal_only_post(db_factory):
+    """A post matching ONLY a `signals` term (no `include`) must still pass the
+    gate and reach the classifier — guards the pack.keywords.signals wiring in
+    run_poll_cycle that no other test exercises."""
+    post = make_post(
+        external_id="t3_signal",
+        title="Need an online store",
+        text="Need someone to build an online store for my shop, will pay well.",
+    )
+    classifier = SpyClassifier(make_score(82))
+    summary = await run_poll_cycle(
+        session_factory=db_factory,
+        notifier=SpyNotifier(),
+        packs=[SIGNAL_PACK],
+        poll_fn=fake_poll([post]),
+        classify_fn=classifier,
+    )
+    assert summary["matched"] == 1
+    assert classifier.calls == 1  # signal-only post reached the classifier
+    assert summary["surfaced"] == 1
+    async with db_factory() as session:
+        stored = (await session.execute(select(RawPost))).scalars().one()
+        assert "someone to build" in stored.matched_keywords
+        assert (await session.execute(select(Lead))).scalars().one().status == "surfaced"
+
+
+async def test_poll_cycle_exclude_vetoes_signal_only_post(db_factory):
+    """exclude must veto a signal match at the pipeline level too — a freebie
+    gig is dropped before any classifier spend."""
+    post = make_post(
+        external_id="t3_freebie",
+        title="Portfolio project",
+        text="Need someone to build my site for free, it's a portfolio piece.",
+    )
+    classifier = SpyClassifier(make_score(82))
+    summary = await run_poll_cycle(
+        session_factory=db_factory,
+        notifier=SpyNotifier(),
+        packs=[SIGNAL_PACK],
+        poll_fn=fake_poll([post]),
+        classify_fn=classifier,
+    )
+    assert summary["matched"] == 0
+    assert classifier.calls == 0  # vetoed before the classifier is ever called
+
+
 async def test_below_threshold_stored_but_not_surfaced(db_factory):
     notifier = SpyNotifier()
     summary = await run_poll_cycle(

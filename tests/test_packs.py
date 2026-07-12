@@ -32,6 +32,23 @@ def test_robofox_web_pack_shape():
     assert pack.max_age_minutes == 180  # DESIGN §3.1 default
 
 
+def test_robofox_web_has_signals_and_threads_queries():
+    (pack,) = [p for p in load_packs(PACKS_DIR) if p.name == "robofox_web"]
+    # hire/build payment-intent openers (OR'd with topic includes at the gate)
+    assert pack.keywords.signals
+    assert "someone to build" in pack.keywords.signals
+    # Threads discovery block so web leads surface once Threads discovery is live
+    assert pack.threads.search_queries
+    # queries must stay aligned with includes — Threads search returns only what
+    # you ask for, then the same gate filters again (divergence burns budget)
+    assert "need a website" in pack.threads.search_queries
+
+
+def test_signals_default_empty():
+    pack = OfferPack(name="x", keywords={"include": ["need a thing"]})
+    assert pack.keywords.signals == []
+
+
 def test_invalid_pack_raises(tmp_path: Path):
     (tmp_path / "broken.yaml").write_text("name: broken\nkeywords: 42\n")
     with pytest.raises(ValidationError):

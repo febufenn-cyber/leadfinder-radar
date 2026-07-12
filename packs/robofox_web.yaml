@@ -26,6 +26,23 @@ hn:
     - need a website
     - recommend an agency website
 
+# Threads keyword-search / CSE-bridge queries. Threads discovery is QUERY-driven
+# (unlike Reddit's firehose): the API only returns posts matching these terms,
+# then the keyword gate filters again — so keep these aligned with `include`
+# below or scarce query budget is spent on posts the gate drops. Currently inert
+# until THREADS_DAILY_QUERY_BUDGET>0 (App Review) or GOOGLE_CSE_KEY/ID are set.
+# Capped at 4 queries: the CSE bridge polls ~24×/day/pack (60-min gate), so 4×24
+# = 96/day stays under Google's 100/day free tier. NOTE the tier is shared across
+# ALL packs on one CSE key — if a second pack's Threads block goes live, raise
+# GOOGLE_CSE_MIN_INTERVAL_MINUTES or add a daily-budget ledger like the official
+# ThreadsAdapter has, or the two packs together blow the 100/day cap.
+threads:
+  search_queries:
+    - need a website
+    - build me a website
+    - looking for a web developer
+    - website for my business
+
 keywords:
   include:
     - need a website
@@ -41,13 +58,27 @@ keywords:
     - recommend a web agency
     - recommend an agency
     - web developer for
+  # Build/web-hire openers, OR'd with `include`, so a gig with no website noun
+  # ("need someone to build an online store, will pay $800") still reaches the
+  # classifier. Kept WEB/BUILD-anchored on purpose: bare payment tokens ("$",
+  # "paid project") or bare "developer"/"freelancer" would open the whole
+  # r/forhire firehose (logo/VA/writing/iOS/blockchain gigs) to Haiku for no
+  # gain. Dollar/rupee amounts are the classifier's job (budget_signal), not the
+  # gate's. Mute a noisy one from the Telegram card.
+  signals:
+    - someone to build
+    - need someone to build
+    - looking for someone to build
+    - need a web developer
+    - hire a web developer
   exclude:
     - for free
+    - unpaid
     - no budget
     - full-time
     - full time job
     - homework
-    - "[for hire]"   # r/forhire sellers advertising themselves, not buyers
+    - for hire   # sellers advertising themselves — tagged "[For Hire]" or prose "…for hire" — not buyers
 
 max_age_minutes: 180
 

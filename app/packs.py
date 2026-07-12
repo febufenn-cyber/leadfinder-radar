@@ -13,7 +13,13 @@ from pydantic import BaseModel, Field
 
 
 class PackKeywords(BaseModel):
-    include: list[str] = Field(min_length=1)
+    include: list[str] = Field(min_length=1)  # topic phrases (website / web-dev)
+    # Payment / hire-intent openers, OR'd with `include` at the gate: a budgeted
+    # gig that never uses the topic vocabulary ("need someone to build …, will
+    # pay") still reaches the classifier. Kept intent-anchored (build/hire/dev),
+    # NOT bare payment symbols, so we don't open the whole r/forhire firehose to
+    # Haiku. Still vetoed by `exclude`. See DESIGN §3.2.
+    signals: list[str] = []
     exclude: list[str] = []
 
 

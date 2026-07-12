@@ -17,6 +17,14 @@ reddit:
     - whatsapp automation
     - automate my business
 
+# Threads discovery queries (query-driven; inert until Threads discovery is live —
+# see robofox_web for the full note). Keep aligned with `include`.
+threads:
+  search_queries:
+    - chatbot for my business
+    - whatsapp automation
+    - ai automation for
+
 keywords:
   include:
     - chatbot for
@@ -26,12 +34,24 @@ keywords:
     - ai agent for
     - ai automation
     - meta ads setup
+  # Build/automation-intent openers, OR'd with `include` (see robofox_web note).
+  # Anchored to THIS pack's domain (bots/agents/automation), not bare
+  # payment/dev tokens, so they don't open unrelated dev gigs to the classifier.
+  signals:
+    - someone to build
+    - need someone to build
+    - automate this
+    - automate our
+    - build a bot
+    - build a chatbot
+    - build an agent
   exclude:
     - for free
+    - unpaid
     - no budget
     - full-time
     - full time job
     - homework
-    - "[for hire]"
+    - for hire
 
 max_age_minutes: 180
