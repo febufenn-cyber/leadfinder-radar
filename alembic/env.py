@@ -15,6 +15,7 @@ import app.models.llm_call  # noqa: F401
 import app.models.mute  # noqa: F401
 import app.models.send  # noqa: F401
 import app.models.raw_post  # noqa: F401
+import app.models.review  # noqa: F401
 from app.core.config import get_settings
 from app.db.base import Base
 
