@@ -1,7 +1,4 @@
-"""arq worker: runs a poll cycle every POLL_INTERVAL_MINUTES (DESIGN §2 scheduler).
-
-Run: uv run arq app.worker.WorkerSettings
-"""
+"""arq worker: polling, drafting, guarded sends, reply-watch, and M5 review nudges."""
 
 from __future__ import annotations
 
@@ -12,6 +9,7 @@ from arq.connections import RedisSettings
 
 from app.core.config import get_settings
 from app.pipeline import run_draft_cycle, run_poll_cycle
+from app.review import run_weekly_review_nudge
 from app.sending import run_send_cycle
 from app.watch import run_watch_cycle
 
@@ -19,7 +17,6 @@ logging.basicConfig(
     level=get_settings().LOG_LEVEL,
     format="%(asctime)s %(levelname)s %(name)s: %(message)s",
 )
-# httpx logs full request URLs at INFO — the Telegram URL contains the bot token.
 logging.getLogger("httpx").setLevel(logging.WARNING)
 
 
@@ -39,6 +36,10 @@ async def watch_job(ctx: dict) -> dict:
     return await run_watch_cycle()
 
 
+async def review_nudge_job(ctx: dict) -> dict:
+    return await run_weekly_review_nudge()
+
+
 _settings = get_settings()
 
 if 60 % _settings.POLL_INTERVAL_MINUTES:
@@ -55,20 +56,20 @@ class WorkerSettings:
             poll_job,
             minute=set(range(0, 60, _settings.POLL_INTERVAL_MINUTES)),
             run_at_startup=True,
-            unique=True,  # a long cycle delays the next tick instead of overlapping it
-            timeout=600,  # classify only (~13s/lead typical); drafting is decoupled
+            unique=True,
+            timeout=600,
         ),
         cron(
             draft_job,
-            second=30,  # every minute, offset from the poll tick
+            second=30,
             run_at_startup=True,
             unique=True,
-            timeout=1800,  # sonnet drafting runs ~3 min per lead, batch of 3
+            timeout=1800,
         ),
         cron(
             send_job,
-            second=15,  # every minute — cheap no-op when nothing is due
-            run_at_startup=False,  # let a restart settle before posting anything
+            second=15,
+            run_at_startup=False,
             unique=True,
             timeout=120,
         ),
@@ -79,5 +80,16 @@ class WorkerSettings:
             run_at_startup=False,
             unique=True,
             timeout=300,
+        ),
+        # Monday 09:00 IST = 03:30 UTC. The event-ledger guard still prevents
+        # duplicate nudges if a deployment or manual run repeats this job.
+        cron(
+            review_nudge_job,
+            weekday=0,
+            hour=3,
+            minute=30,
+            run_at_startup=False,
+            unique=True,
+            timeout=60,
         ),
     ]

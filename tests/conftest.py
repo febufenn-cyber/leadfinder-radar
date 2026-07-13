@@ -23,6 +23,7 @@ async def db_factory():
     import app.models.mute  # noqa: F401
     import app.models.send  # noqa: F401
     import app.models.raw_post  # noqa: F401
+    import app.models.review  # noqa: F401
     from app.db.base import Base
 
     engine = create_async_engine(TEST_DATABASE_URL)

@@ -1,24 +1,14 @@
-"""Telegram approval bot (DESIGN §3.6) — thin adapter over app/approval.py.
+"""Telegram approval + M5 review bot.
 
 Run: uv run python -m app.bot
 
-Copy-mode only (§3.7): approving a variant sends the reply text back as a
-copyable message plus the thread link; the owner posts manually from his own
-account. The bot obeys exactly one chat — TELEGRAM_CHAT_ID — and ignores
-everyone else.
+The bot obeys exactly one chat — TELEGRAM_CHAT_ID — and ignores everyone else.
 
-Callback data grammar (≤64 bytes): "a:<action>:<arg>:<lead_id>"
-  a:send:A:12    approve variant A of lead 12
-  a:edit:_:12    pick which variant to edit (second keyboard: a:ed2:<variant>:12)
-  a:ed2:B:12     ForceReply prompt for an edited variant-B text
-  a:skip:_:12    skip lead 12
-  a:mutekw:_:12  choose which matched keyword to mute (second keyboard: a:mk:<idx>:12)
-  a:mutecomm:_:12  mute the lead's community for its pack
-  a:cxl:33:12    cancel queued send #33 (api mode; the jitter window is the undo window)
-
-SEND_MODE=api (M4): "Send X" queues a jittered API send instead of the copy
-block — same per-item approval gate, same buttons; §0 still holds because the
-sends row can only be created from this approval path.
+Approval callback grammar (≤64 bytes): "a:<action>:<arg>:<lead_id>"
+Review callback grammar: "r:<label>:<raw_post_id>"
+  r:demand:42      classifier missed a real demand lead
+  r:not_demand:42  classifier correctly suppressed it
+  r:skip:42        leave an explicit skipped review label
 """
 
 from __future__ import annotations
@@ -31,6 +21,7 @@ from telegram import ForceReply, InlineKeyboardButton, InlineKeyboardMarkup, Upd
 from telegram.ext import (
     Application,
     CallbackQueryHandler,
+    CommandHandler,
     ContextTypes,
     MessageHandler,
     filters,
@@ -49,12 +40,18 @@ from app.core.config import get_settings
 from app.db.session import get_session_factory
 from app.models.lead import Lead
 from app.models.raw_post import RawPost
+from app.review import (
+    ReviewError,
+    format_review_card,
+    load_review_packs,
+    record_review,
+    review_candidates,
+)
 
 log = logging.getLogger(__name__)
 logging.basicConfig(level="INFO", format="%(asctime)s %(levelname)s %(name)s: %(message)s")
 logging.getLogger("httpx").setLevel(logging.WARNING)
 
-# must NOT match copy-confirmation or skip messages — only the ed2 ForceReply prompt
 _EDIT_PROMPT_RE = re.compile(r"edited text for lead #(\d+) variant ([ABC])")
 
 
@@ -70,7 +67,6 @@ async def _lead_post(session, lead_id: int) -> tuple[Lead | None, RawPost | None
 
 
 def _copy_message(payload) -> str:
-    """The §3.7 clipboard flow: thread link + reply text in a copyable block."""
     return (
         f"✅ Approved <b>{payload.variant}</b> for lead #{payload.lead_id} — "
         f"long-press the block to copy, then post it yourself:\n"
@@ -80,9 +76,44 @@ def _copy_message(payload) -> str:
 
 
 async def _say(update: Update, context: ContextTypes.DEFAULT_TYPE, text: str, **kwargs) -> None:
-    """query.message can be None for aged/inaccessible messages — always send
-    via the chat id instead of replying to the card."""
     await context.bot.send_message(chat_id=update.effective_chat.id, text=text, **kwargs)
+
+
+async def on_review_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Send up to ten unlabeled sub-threshold posts for owner review."""
+    if not _authorized(update):
+        log.warning("ignoring /review10 from unauthorized chat %s", update.effective_chat)
+        return
+    packs = load_review_packs()
+    pack_name = context.args[0] if context.args else None
+    thresholds = {pack.name: pack.threshold for pack in packs}
+    if pack_name and pack_name not in thresholds:
+        await _say(
+            update,
+            context,
+            f"Unknown pack {pack_name!r}. Available: {', '.join(sorted(thresholds))}",
+        )
+        return
+
+    factory = get_session_factory()
+    async with factory() as session:
+        posts = await review_candidates(session, packs, limit=10, pack_name=pack_name)
+
+    if not posts:
+        await _say(update, context, "✅ No unlabeled sub-threshold posts are waiting for review.")
+        return
+
+    for post in posts:
+        card, raw_buttons = format_review_card(post, thresholds[post.pack])
+        buttons = [[InlineKeyboardButton(**button) for button in row] for row in raw_buttons]
+        await _say(
+            update,
+            context,
+            card,
+            parse_mode="HTML",
+            disable_web_page_preview=True,
+            reply_markup=InlineKeyboardMarkup(buttons),
+        )
 
 
 async def on_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -92,7 +123,38 @@ async def on_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
     query = update.callback_query
     await query.answer()
     parts = (query.data or "").split(":")
-    if len(parts) != 4 or parts[0] not in {"a"}:
+
+    if len(parts) == 3 and parts[0] == "r":
+        _, label, raw_post_id_s = parts
+        raw_post_id = int(raw_post_id_s)
+        packs = load_review_packs()
+        thresholds = {pack.name: pack.threshold for pack in packs}
+        factory = get_session_factory()
+        try:
+            async with factory() as session:
+                post = await session.get(RawPost, raw_post_id)
+                if post is None or post.pack not in thresholds:
+                    raise ReviewError(f"raw post #{raw_post_id} has no active pack")
+                review = await record_review(
+                    session,
+                    raw_post_id,
+                    label,
+                    threshold=thresholds[post.pack],
+                )
+            label_text = {
+                "demand": "✅ demand lead",
+                "not_demand": "❌ not a lead",
+                "skip": "⏭ skipped",
+            }[review.label]
+            await _say(update, context, f"Recorded post #{raw_post_id}: {label_text}.")
+        except ReviewError as exc:
+            await _say(update, context, f"⚠️ {exc}")
+        except Exception:
+            log.exception("review callback failed (data=%s)", query.data)
+            await _say(update, context, "⚠️ review failed — check the bot logs.")
+        return
+
+    if len(parts) != 4 or parts[0] != "a":
         return
     _, action, arg, lead_id_s = parts
     lead_id = int(lead_id_s)
@@ -131,7 +193,6 @@ async def on_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
                     await _say(update, context, "Too late — that send already executed.")
             elif action == "edit":
                 from sqlalchemy import select
-
                 from app.models.draft import Draft
 
                 variants = (
@@ -144,12 +205,10 @@ async def on_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
                 if not variants:
                     await _say(update, context, f"lead #{lead_id} has no drafts to edit.")
                     return
-                buttons = [
-                    [
-                        InlineKeyboardButton(f"Edit {v}", callback_data=f"a:ed2:{v}:{lead_id}")
-                        for v in variants
-                    ]
-                ]
+                buttons = [[
+                    InlineKeyboardButton(f"Edit {v}", callback_data=f"a:ed2:{v}:{lead_id}")
+                    for v in variants
+                ]]
                 await _say(
                     update, context, "Edit which variant?",
                     reply_markup=InlineKeyboardMarkup(buttons),
@@ -229,6 +288,7 @@ def main() -> None:
             "See README 'Telegram setup'."
         )
     app = Application.builder().token(settings.TELEGRAM_BOT_TOKEN).build()
+    app.add_handler(CommandHandler("review10", on_review_command))
     app.add_handler(CallbackQueryHandler(on_callback))
     app.add_handler(MessageHandler(filters.REPLY & filters.TEXT, on_edit_reply))
     log.info("approval bot polling (chat %s only)", settings.TELEGRAM_CHAT_ID)
