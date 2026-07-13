@@ -1,4 +1,4 @@
-"""arq worker: polling, drafting, guarded sends, reply-watch, and M5 review nudges."""
+"""arq worker: polling, drafting, guarded sends, reply-watch, and M5 learning loops."""
 
 from __future__ import annotations
 
@@ -9,6 +9,7 @@ from arq.connections import RedisSettings
 
 from app.core.config import get_settings
 from app.pipeline import run_draft_cycle, run_poll_cycle
+from app.prompt_tuner import run_prompt_tuning_cycle
 from app.review import run_weekly_review_nudge
 from app.sending import run_send_cycle
 from app.watch import run_watch_cycle
@@ -38,6 +39,10 @@ async def watch_job(ctx: dict) -> dict:
 
 async def review_nudge_job(ctx: dict) -> dict:
     return await run_weekly_review_nudge()
+
+
+async def prompt_tuning_job(ctx: dict) -> dict:
+    return await run_prompt_tuning_cycle()
 
 
 _settings = get_settings()
@@ -81,7 +86,7 @@ class WorkerSettings:
             unique=True,
             timeout=300,
         ),
-        # Monday 09:00 IST = 03:30 UTC. The event-ledger guard still prevents
+        # Monday 09:00 IST = 03:30 UTC. The event-ledger guard prevents
         # duplicate nudges if a deployment or manual run repeats this job.
         cron(
             review_nudge_job,
@@ -91,5 +96,16 @@ class WorkerSettings:
             run_at_startup=False,
             unique=True,
             timeout=60,
+        ),
+        # First day of each month, 09:30 IST. The cycle produces a proposal
+        # only; it has no code path that writes prompt/persona/few-shot files.
+        cron(
+            prompt_tuning_job,
+            day=1,
+            hour=4,
+            minute=0,
+            run_at_startup=False,
+            unique=True,
+            timeout=1800,
         ),
     ]
