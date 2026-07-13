@@ -1,7 +1,8 @@
 """M5 classifier-review workflow.
 
-The owner labels a bounded sample of classifier decisions from Telegram. Labels
-are evaluation evidence only: they never auto-change thresholds or prompts.
+The owner labels a bounded, balanced sample of classifier decisions from
+Telegram. Labels are evaluation evidence only: they never auto-change
+thresholds or prompts.
 """
 
 from __future__ import annotations
@@ -48,10 +49,11 @@ async def review_candidates(
     limit: int = 10,
     pack_name: str | None = None,
 ) -> list[RawPost]:
-    """Return recent, unlabeled, sub-threshold posts for false-negative review.
+    """Return recent unlabeled classifier decisions for balanced review.
 
-    Results are round-robin across packs so one noisy source cannot consume the
-    entire weekly sample.
+    Sampling alternates predicted-negative and predicted-positive decisions
+    across packs. That makes both false negatives/recall and false
+    positives/precision measurable without letting one noisy pack dominate.
     """
     if limit <= 0:
         return []
@@ -69,24 +71,28 @@ async def review_candidates(
                 ~RawPost.id.in_(reviewed_ids),
             )
             .order_by(desc(RawPost.fetched_at))
-            .limit(max(200, limit * 30))
+            .limit(max(300, limit * 40))
         )
     ).scalars().all()
 
-    buckets: dict[str, list[RawPost]] = {}
+    buckets: dict[tuple[str, bool], list[RawPost]] = {}
     for post in rows:
         threshold = thresholds.get(post.pack)
         if threshold is None or (pack_name and post.pack != pack_name):
             continue
-        if post.fit_score is None or post.fit_score >= threshold:
-            continue
-        buckets.setdefault(post.pack, []).append(post)
+        predicted_positive = post.fit_score >= threshold
+        buckets.setdefault((post.pack, predicted_positive), []).append(post)
 
     selected: list[RawPost] = []
-    names = sorted(buckets)
-    while len(selected) < limit and any(buckets.get(name) for name in names):
-        for name in names:
-            bucket = buckets.get(name, [])
+    pack_names = sorted({name for name, _prediction in buckets})
+    keys = [
+        (name, predicted_positive)
+        for name in pack_names
+        for predicted_positive in (False, True)
+    ]
+    while len(selected) < limit and any(buckets.get(key) for key in keys):
+        for key in keys:
+            bucket = buckets.get(key, [])
             if bucket:
                 selected.append(bucket.pop(0))
                 if len(selected) >= limit:
@@ -101,15 +107,16 @@ def format_review_card(post: RawPost, threshold: int) -> tuple[str, list[list[di
     preview = (post.text or "").strip()
     if len(preview) > 700:
         preview = preview[:697].rstrip() + "..."
+    prediction = "surfaced" if post.fit_score >= threshold else "not surfaced"
     card = (
         f"🧪 <b>Classifier review</b> · {html.escape(post.pack)}\n"
-        f"Predicted <b>not surfaced</b>: score {post.fit_score}/{threshold}\n"
+        f"Predicted <b>{prediction}</b>: score {post.fit_score}/{threshold}\n"
         f"{html.escape(community)} · post #{post.id}\n\n"
         f"<b>{html.escape(title)}</b>\n"
         f"{html.escape(summary) + chr(10) if summary else ''}"
         f"{html.escape(preview)}\n\n"
         f'<a href="{html.escape(post.url)}">Open post</a>\n\n'
-        "Should this have counted as a demand lead?"
+        "Should this count as a demand lead?"
     )
     buttons = [[
         {"text": "✅ Demand", "callback_data": f"r:demand:{post.id}"},
@@ -162,6 +169,7 @@ async def record_review(
                 "previous_label": previous,
                 "fit_score": post.fit_score,
                 "threshold": threshold,
+                "predicted_positive": post.fit_score >= threshold,
             },
         )
     )
@@ -184,7 +192,7 @@ async def run_weekly_review_nudge(
     packs: list[OfferPack] | None = None,
     now: datetime | None = None,
 ) -> dict[str, int]:
-    """Send at most one review reminder per owner-local ISO week."""
+    """Send at most one balanced-review reminder per owner-local ISO week."""
     settings = get_settings()
     session_factory = session_factory or get_session_factory()
     notifier = notifier or get_notifier(settings)
@@ -207,7 +215,7 @@ async def run_weekly_review_nudge(
 
         sent = await notifier.send(
             f"🧪 LeadFinder weekly classifier review is ready "
-            f"({len(available)} sampled posts). Send /review10 to label them."
+            f"({len(available)} balanced decisions). Send /review10 to label them."
         )
         if sent:
             session.add(
@@ -216,6 +224,7 @@ async def run_weekly_review_nudge(
                     payload={
                         "available": len(available),
                         "week_start": week_start.isoformat(),
+                        "sampling": "balanced_predictions",
                     },
                 )
             )
