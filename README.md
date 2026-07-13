@@ -1,99 +1,137 @@
 # LeadFinder
 
 Demand-post radar → scored leads → drafted replies → **one-tap owner-approved send**.
-Watches public streams (Reddit RSS in M0; Threads API + HN later) for buying-intent posts
-matching configured *offer packs*, dedupes them, and alerts the owner's phone with a link.
 
-Full design: [DESIGN.md](DESIGN.md). Current milestone: **M0** — "a personal F5Bot":
-Reddit RSS poller for one pack → raw Telegram alert with link.
+LeadFinder watches compliant public sources for buying intent, applies cheap filters and a
+classifier, drafts context-specific replies, and sends each candidate to the owner's Telegram.
+Discovery, scoring, drafting, evaluation, and prompt analysis are autonomous. **Sending remains
+per-reply owner-approved, always.**
+
+Full design: [DESIGN.md](DESIGN.md). Current milestone: **M5 — evaluation and learning loop**.
 
 ## The one rule that matters
 
-**Discovery, dedup, scoring, enrichment, drafting are autonomous. Sending is owner-approved,
-always.** There is no unattended send path in this codebase and none may be added — see
-DESIGN.md §0. M0 sends nothing to any platform; alerts go to the owner only.
+There is no unattended send path, no batch approval, no account rotation, and no automatic
+follow-up campaign. API-send is optional and still starts from one owner tap on one draft.
+Guardrails are re-checked at execution time.
 
-## Compliance posture (DESIGN.md §5)
+## Compliance posture
 
-- Official APIs / public RSS only. No login-walled scraping, no headless-browser session
-  harvesting, no fake accounts. One real account per platform — the owner's.
-- Reddit RSS is polled gently: descriptive `REDDIT_USER_AGENT`, sequential fetches with
-  spacing, 2-minute cycle, posts older than `max_age_minutes` skipped.
-- Respect community self-promotion rules (packs carry per-community notes from M2).
-- Volume stays boutique by design: the goal is 3–8 excellent engagements/day, not hundreds.
-- Disclose honestly if asked whether AI helped draft.
+- Official APIs and public RSS only; no login-walled scraping or browser-session harvesting.
+- One real account per platform: the owner's.
+- Community rules are injected into drafting; unknown communities default to no promotion.
+- Volume stays boutique: a few high-quality engagements per day, not mass outreach.
+- Threads discovery uses the official API when approved; the Google CSE bridge is a temporary,
+  copy-mode-only discovery source while public keyword search is under Meta App Review.
 
 ## Quick start
 
 ```bash
-# infra: postgres :5442, test-postgres :5433 (tmpfs), redis :6380
-# (5432/6379 are taken by probexa containers on the dev Mac)
+# Postgres :5442, test Postgres :5433, Redis :6380
 docker compose up -d
-
 uv sync
-cp .env.example .env          # fill TELEGRAM_* when ready; console fallback otherwise
+cp .env.example .env
 uv run alembic upgrade head
 
-uv run python scripts/poll_once.py           # one manual poll cycle
-uv run arq app.worker.WorkerSettings         # continuous: polls every 2 min
-uv run uvicorn app.main:app --port 8100      # dashboard: http://localhost:8100
-uv run python -m app.bot                     # approval bot (needs TELEGRAM_* set)
+uv run python scripts/poll_once.py
+uv run arq app.worker.WorkerSettings
+uv run uvicorn app.main:app --port 8100
+uv run python -m app.bot
 ```
 
-## The approval flow (M2, copy-mode)
+## Pipeline
 
-A surfaced lead (fit ≥ pack threshold) is drafted by Sonnet into 2–3 variants and
-lands on your phone as a card with buttons: `Send A/B/C · Edit · Skip · Mute keyword ·
-Mute community`. **In the default `SEND_MODE=copy`, Send returns the text + thread
-link for you to copy and post manually from your own account** — nothing is posted
-automatically. Edits you make become gold samples for prompt tuning.
+```text
+Reddit / Hacker News / Threads
+→ freshness + mute + keyword gates
+→ exact dedup
+→ Haiku classify + threshold
+→ Sonnet draft A/B/C
+→ Telegram owner approval
+→ copy-mode or guarded API-send
+→ reply watch + CRM outcome tracking
+```
 
-Before working real leads, fill in the owner-truth files (drafts stay claim-free
-until you do): `packs/personas/robofox_web.yaml` (true facts only) and
-`packs/fewshots/robofox_web.yaml` (replace starter examples with ~10 real
-positives + ~10 near-misses).
+The classifier circuit breaker stores work during a sustained Claude outage and probes for
+recovery without flooding the owner with UNSCORED alerts. Drafting has its own attempt cap and
+outbox retry so polling remains fresh.
 
-## Telegram setup (2 minutes)
+## Approval and sending
 
-1. Message **@BotFather** → `/newbot` → copy token into `TELEGRAM_BOT_TOKEN`.
-2. Send your new bot any message, then open
-   `https://api.telegram.org/bot<TOKEN>/getUpdates` and copy
-   `result[].message.chat.id` into `TELEGRAM_CHAT_ID`.
+Approval cards offer `Send A/B/C · Edit · Skip · Mute keyword · Mute community`.
 
-## Sources (M3)
+- `SEND_MODE=copy` returns the chosen text and thread link for manual posting.
+- `SEND_MODE=api` queues the approved reply after mandatory jitter and exposes Cancel until the
+  send executes.
+- Execution-time guardrails: active halt, quiet hours, platform/DM caps, and subreddit cooldown.
+- A committed `queued → executing` claim happens before the outbound API call, preventing an
+  uncertain crash from posting twice.
+- A Reddit mod removal auto-halts that platform until `scripts/clear_halt.py` is run manually.
 
-Reddit (OAuth or RSS fallback, 2-min cadence) + Hacker News (Algolia, no auth,
-2-min cadence) + Threads (**official API only** — set `THREADS_ACCESS_TOKEN`
-from your Meta app; polling is budgeted: max `THREADS_DAILY_QUERY_BUDGET`
-keyword-searches/day, ≥`THREADS_MIN_INTERVAL_MINUTES` between polls, ledger in
-the events table so restarts can't double-spend the quota).
+## Sources
 
-## API-send (M4, opt-in: `SEND_MODE=api`)
+- **Reddit:** OAuth application-only polling when configured, otherwise RSS fallback.
+- **Hacker News:** official Algolia search API.
+- **Threads:** official keyword-search API with durable quota ledger and interval budget.
+- **Threads CSE bridge:** Google Programmable Search restricted to public Threads permalinks;
+  discovery only and structurally copy-mode.
 
-Same per-item approval gate, but `Send A/B/C` queues the reply to be posted from
-**your own accounts** after a 2–9 min jitter (the Cancel button works until it
-posts). Guardrails are re-checked at execution time, in code: active halt >
-quiet hours (23:00–07:00 `OWNER_TZ`) > daily caps (8 reddit comments / 5 threads
-replies / 3 DMs) > one send per community per day. Combo (`comment+dm`) variants
-and HN leads stay copy-mode.
+Only one Threads discovery adapter should own a pack's queries in production to avoid duplicate
+cards. Disable the CSE credentials after official public keyword search is approved.
 
-Setup per platform:
-- **Reddit**: your existing script app + `REDDIT_USERNAME` / `REDDIT_PASSWORD`
-  (password grant posts as you; with 2FA use `password:123456` or an app password).
-- **Threads**: the M3 token also needs the `threads_manage_replies` permission.
-- **HubSpot** (optional): private-app token in `HUBSPOT_ACCESS_TOKEN` — replied
-  leads sync as contact + note.
+## M5: evaluation and learning loop
 
-The watcher (every `WATCH_INTERVAL_MINUTES`) detects replies to your posted
-sends (lead → `replied`, 🎉 alert, HubSpot sync) and **auto-halts the platform
-if a mod removes one of your comments**. Halts persist until you clear them:
-`uv run python scripts/clear_halt.py`. Send history: dashboard `/sends`.
+### Weekly classifier review
 
-## Offer packs
+Every Monday the worker sends one reminder when unlabeled sub-threshold posts are available.
+Run this at any time from the owner chat:
 
-`packs/*.yaml` — each pack owns subreddits, search queries, include/exclude keywords,
-`max_age_minutes`, and `enabled`. M0 ships `robofox_web` enabled; `robofox_ai` and
-`zervvo_abroad` are included as disabled templates.
+```text
+/review10
+/review10 robofox_web
+```
+
+Each review card records `Demand`, `Not lead`, or `Skip` in `review_labels`. Labels are evidence
+only: they do not automatically change thresholds, prompts, or send behavior.
+
+### Evaluation dashboard
+
+Open `/evals` to see:
+
+- per-pack TP / FP / FN / TN, precision, and recall from human labels
+- reply, conversation, and win performance by pack
+- performance of the chosen A/B/C draft variants
+- number and average change magnitude of owner-edited gold drafts
+- post-to-alert p50, total LLM spend, and cost per surfaced lead
+
+### Monthly edit-diff proposal
+
+On the first day of each month, packs with at least three recent gold edits receive a conservative
+Sonnet analysis. The proposal is stored as a `prompt_tuning_proposal` event and summarized in
+Telegram. **Nothing is applied automatically.** A human must review the evidence and intentionally
+edit prompts, personas, or few-shots.
+
+Manual run:
+
+```bash
+uv run python scripts/propose_prompt_tuning.py
+```
+
+## Telegram setup
+
+1. Create a bot with BotFather and set `TELEGRAM_BOT_TOKEN`.
+2. Send it a message and set the resulting chat id as `TELEGRAM_CHAT_ID`.
+3. The bot ignores callbacks, replies, and review commands from every other chat.
+
+## Configuration highlights
+
+- Storage: `DATABASE_URL`, `REDIS_URL`
+- Polling: `POLL_INTERVAL_MINUTES`, Reddit credentials, Threads token/budgets, CSE credentials
+- Approval/send: `SEND_MODE`, `OWNER_TZ`, quiet hours, daily caps, jitter, watch interval
+- Alerts/CRM: Telegram credentials, optional `HUBSPOT_ACCESS_TOKEN`
+- Models: `CLAUDE_FAST_MODEL`, `CLAUDE_STANDARD_MODEL`, classify/draft timeouts
+
+See `.env.example` and `docs/FEATURES.md` for the complete operational reference.
 
 ## Tests
 
@@ -102,7 +140,10 @@ docker compose up -d postgres-test
 uv run pytest -v
 ```
 
-## Ops
+## Operations
 
-- Nightly backup (VPS cron): `scripts/backup.sh` → `pg_dump` to `~/backups/leadfinder/`.
-- Dashboard is server-rendered tables only; the phone is the real UI.
+- Dashboard: `/`, `/leads`, `/sends`, `/evals`
+- Nightly database backup: `scripts/backup.sh`
+- One-shot pipeline: `scripts/poll_once.py`
+- Halt control: `scripts/clear_halt.py`
+- Manual M5 proposal: `scripts/propose_prompt_tuning.py`
