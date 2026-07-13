@@ -83,8 +83,10 @@ cards. Disable the CSE credentials after official public keyword search is appro
 
 ### Weekly classifier review
 
-Every Monday the worker sends one reminder when unlabeled sub-threshold posts are available.
-Run this at any time from the owner chat:
+Every Monday the worker sends one reminder when unlabeled classifier decisions are available.
+The review queue alternates surfaced and suppressed predictions across packs, so both precision
+(false positives) and recall (false negatives) can be measured. Run it at any time from the owner
+chat:
 
 ```text
 /review10

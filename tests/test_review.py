@@ -41,16 +41,21 @@ async def scored_post(session, *, external_id: str, score: int, pack_name: str =
     return post
 
 
-async def test_candidates_are_unlabeled_subthreshold_and_round_robin(db_session):
-    a = await scored_post(db_session, external_id="a", score=64)
-    await scored_post(db_session, external_id="b", score=70)
-    c = await scored_post(db_session, external_id="c", score=40, pack_name="zervvo")
+async def test_candidates_balance_predictions_and_packs(db_session):
+    labeled = await scored_post(db_session, external_id="labeled", score=64)
+    positive = await scored_post(db_session, external_id="positive", score=70)
+    negative_other_pack = await scored_post(
+        db_session,
+        external_id="negative-other",
+        score=40,
+        pack_name="zervvo",
+    )
     db_session.add(
         ReviewLabel(
-            raw_post_id=a.id,
-            pack=a.pack,
+            raw_post_id=labeled.id,
+            pack=labeled.pack,
             label="not_demand",
-            fit_score=a.fit_score,
+            fit_score=labeled.fit_score,
             threshold=65,
             predicted_positive=False,
         )
@@ -62,7 +67,10 @@ async def test_candidates_are_unlabeled_subthreshold_and_round_robin(db_session)
         [pack(), pack("zervvo", 60)],
         limit=10,
     )
-    assert [row.id for row in rows] == [c.id]
+
+    assert {row.id for row in rows} == {positive.id, negative_other_pack.id}
+    assert any(row.fit_score >= 65 for row in rows if row.pack == "robofox_web")
+    assert any(row.fit_score < 60 for row in rows if row.pack == "zervvo")
 
 
 async def test_record_review_updates_idempotently_and_audits(db_session):
@@ -81,15 +89,17 @@ async def test_record_review_updates_idempotently_and_audits(db_session):
     ).scalars().all()
     assert [event.payload["label"] for event in events] == ["demand", "not_demand"]
     assert events[1].payload["previous_label"] == "demand"
+    assert events[1].payload["predicted_positive"] is False
 
 
-async def test_review_card_escapes_untrusted_post_text(db_session):
-    post = await scored_post(db_session, external_id="unsafe", score=50)
+async def test_review_card_escapes_untrusted_text_and_shows_prediction(db_session):
+    post = await scored_post(db_session, external_id="unsafe", score=70)
     post.title = "<script>alert(1)</script>"
     post.text = "<b>need help</b>"
     card, buttons = format_review_card(post, 65)
     assert "<script>" not in card
     assert "&lt;script&gt;" in card
+    assert "Predicted <b>surfaced</b>" in card
     assert buttons[0][0]["callback_data"] == f"r:demand:{post.id}"
 
 
@@ -124,3 +134,4 @@ async def test_weekly_nudge_sends_once(db_factory):
     assert first == {"available": 1, "sent": 1}
     assert second == {"available": 0, "sent": 0}
     assert len(notifier.messages) == 1
+    assert "balanced decisions" in notifier.messages[0]
