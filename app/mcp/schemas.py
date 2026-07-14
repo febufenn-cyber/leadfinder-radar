@@ -110,3 +110,22 @@ class MuteResult(BaseModel):
     value: str
     pack: str | None
     created: bool
+
+
+class ApprovalChallengeResult(BaseModel):
+    challenge_id: int
+    lead_id: int
+    variant: str
+    expires_at: datetime
+    delivered: bool
+
+
+class ApprovalResult(BaseModel):
+    lead_id: int
+    variant: str
+    mode: str
+    status: str
+    url: str | None = None
+    text: str | None = None
+    send_id: int | None = None
+    scheduled_at: datetime | None = None

@@ -21,6 +21,7 @@ async def db_factory():
     import app.models.halt  # noqa: F401
     import app.models.lead  # noqa: F401
     import app.models.llm_call  # noqa: F401
+    import app.models.mcp_approval_challenge  # noqa: F401
     import app.models.mute  # noqa: F401
     import app.models.send  # noqa: F401
     import app.models.raw_post  # noqa: F401
