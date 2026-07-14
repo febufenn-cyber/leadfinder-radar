@@ -55,6 +55,8 @@ jobs:
         run: |
           uv run alembic downgrade 008
           uv run alembic upgrade head
+      - name: MCP smoke
+        run: uv run python scripts/mcp_smoke.py --in-memory
       - name: Test
         run: uv run pytest -q --junitxml=pytest-results.xml
       - name: Upload pytest report

@@ -1,0 +1,25 @@
+[Unit]
+Description=LeadFinder MCP loopback service
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=leadfinder
+Group=leadfinder
+WorkingDirectory=/opt/leadfinder-radar
+EnvironmentFile=/opt/leadfinder-radar/.env
+Environment=MCP_TRANSPORT=streamable-http
+Environment=MCP_BIND_HOST=127.0.0.1
+ExecStart=/usr/bin/env uv run python -m app.mcp.server
+Restart=on-failure
+RestartSec=5
+TimeoutStopSec=20
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectHome=true
+ProtectSystem=strict
+ReadWritePaths=/opt/leadfinder-radar
+
+[Install]
+WantedBy=multi-user.target

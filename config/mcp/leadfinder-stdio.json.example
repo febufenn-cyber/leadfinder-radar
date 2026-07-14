@@ -1,0 +1,18 @@
+{
+  "mcpServers": {
+    "leadfinder": {
+      "command": "uv",
+      "args": [
+        "--directory",
+        "/opt/leadfinder-radar",
+        "run",
+        "python",
+        "-m",
+        "app.mcp.server"
+      ],
+      "env": {
+        "MCP_TRANSPORT": "stdio"
+      }
+    }
+  }
+}
