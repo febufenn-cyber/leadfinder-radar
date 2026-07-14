@@ -56,4 +56,11 @@ jobs:
           uv run alembic downgrade 008
           uv run alembic upgrade head
       - name: Test
-        run: uv run pytest -q
+        run: uv run pytest -q --junitxml=pytest-results.xml
+      - name: Upload pytest report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: pytest-results
+          path: pytest-results.xml
+          if-no-files-found: ignore
