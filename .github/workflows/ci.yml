@@ -81,15 +81,11 @@ jobs:
 
   finalize-m6-reference:
     needs: test
-    if: github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository
+    if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
-    permissions:
-      contents: write
     steps:
       - uses: actions/checkout@v4
-        with:
-          ref: ${{ github.head_ref }}
-      - name: Append M6 feature reference
+      - name: Build finalized feature reference
         run: |
           python - <<'PY'
           from pathlib import Path
@@ -137,10 +133,8 @@ M6 adds an owner-only Model Context Protocol surface without bypassing the human
           if marker not in text:
               path.write_text(text.rstrip() + section + "\n", encoding="utf-8")
           PY
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add docs/FEATURES.md
-          if ! git diff --cached --quiet; then
-            git commit -m "docs: append M6 feature reference"
-            git push origin HEAD:${{ github.head_ref }}
-          fi
+      - name: Upload finalized feature reference
+        uses: actions/upload-artifact@v4
+        with:
+          name: m6-features
+          path: docs/FEATURES.md
