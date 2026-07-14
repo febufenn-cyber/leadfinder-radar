@@ -95,3 +95,18 @@ class StatsResult(BaseModel):
     average_fit_score: float | None
     llm_calls: int
     llm_cost_usd: float
+
+
+class RedraftResult(BaseModel):
+    lead_id: int
+    archived_revision_ids: list[int]
+    active_draft_ids: list[int]
+    variants: list[str]
+    guidance_sha256: str
+
+
+class MuteResult(BaseModel):
+    kind: str
+    value: str
+    pack: str | None
+    created: bool
