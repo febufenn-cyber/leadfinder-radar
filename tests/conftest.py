@@ -17,6 +17,7 @@ async def db_factory():
     """Fresh schema per test; returns a session factory bound to this test's event loop."""
     import app.models.event  # noqa: F401 — register tables on Base.metadata
     import app.models.draft  # noqa: F401
+    import app.models.draft_revision  # noqa: F401
     import app.models.halt  # noqa: F401
     import app.models.lead  # noqa: F401
     import app.models.llm_call  # noqa: F401
