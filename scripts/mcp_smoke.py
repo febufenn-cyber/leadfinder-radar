@@ -8,6 +8,11 @@ import asyncio
 import json
 import os
 import sys
+from pathlib import Path
+
+_REPO_ROOT = Path(__file__).resolve().parents[1]
+if str(_REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(_REPO_ROOT))
 
 from mcp import ClientSession, StdioServerParameters
 from mcp.client.stdio import stdio_client
@@ -65,6 +70,7 @@ async def _run_stdio() -> dict:
         command=sys.executable,
         args=["-m", "app.mcp.server"],
         env=environment,
+        cwd=str(_REPO_ROOT),
     )
     async with stdio_client(parameters) as (read_stream, write_stream):
         async with ClientSession(read_stream, write_stream) as session:
