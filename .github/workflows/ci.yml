@@ -78,30 +78,3 @@ jobs:
           name: pytest-results
           path: pytest-results.xml
           if-no-files-found: ignore
-
-  finalize-m6-reference:
-    needs: test
-    if: github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository
-    runs-on: ubuntu-latest
-    permissions:
-      contents: write
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          ref: ${{ github.head_ref }}
-      - name: Build finalized feature reference
-        run: python scripts/append_m6_features.py
-      - name: Commit feature reference through GitHub API
-        env:
-          GH_TOKEN: ${{ github.token }}
-          TARGET_BRANCH: ${{ github.head_ref }}
-        run: |
-          current_sha=$(gh api "repos/${GITHUB_REPOSITORY}/contents/docs/FEATURES.md?ref=${TARGET_BRANCH}" --jq .sha)
-          encoded=$(base64 -w0 docs/FEATURES.md)
-          jq -n \
-            --arg message "docs: append M6 feature reference" \
-            --arg content "$encoded" \
-            --arg sha "$current_sha" \
-            --arg branch "$TARGET_BRANCH" \
-            '{message:$message,content:$content,sha:$sha,branch:$branch}' > /tmp/features-update.json
-          gh api --method PUT "repos/${GITHUB_REPOSITORY}/contents/docs/FEATURES.md" --input /tmp/features-update.json
