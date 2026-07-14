@@ -7,7 +7,6 @@ from datetime import UTC, datetime, timedelta
 import pytest
 from sqlalchemy import func, select
 
-import app.approval as approval_module
 from app.core.config import Settings
 from app.db.session import insert_new_posts
 from app.mcp.approvals import ApprovalChallengeService, ChallengeError
@@ -168,7 +167,7 @@ async def test_attempt_limit_locks_challenge(db_factory):
 
 async def test_api_mode_uses_existing_queue_send_path(db_factory, monkeypatch):
     settings = _settings("api")
-    monkeypatch.setattr(approval_module, "get_settings", lambda: settings)
+    monkeypatch.setattr("app.core.config.get_settings", lambda: settings)
     async with db_factory() as session:
         lead, _ = await _drafted_lead(session, external_id="api")
     service = _service(db_factory, FakeNotifier(), settings=settings)
