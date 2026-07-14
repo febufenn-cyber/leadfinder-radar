@@ -151,7 +151,7 @@ Inside JSON strings, escape newlines as \\n — never emit raw line breaks in a 
         },
         ensure_ascii=False,
     )
-    user = f"<untrusted_post_and_guidance>\n{harden_payload(payload)}\n</untrusted_post_and_guidance>"
+    user = f"<untrusted_post_data>\n{harden_payload(payload)}\n</untrusted_post_data>"
     return system, user
 
 
