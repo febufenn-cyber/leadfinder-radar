@@ -49,7 +49,11 @@ jobs:
         run: uv sync --frozen --all-groups
       - name: Lint
         run: uv run ruff check .
-      - name: Verify migrations
+      - name: Verify clean migration chain
         run: uv run alembic upgrade head
+      - name: Verify previous-head upgrade
+        run: |
+          uv run alembic downgrade 008
+          uv run alembic upgrade head
       - name: Test
         run: uv run pytest -q
