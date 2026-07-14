@@ -1,4 +1,4 @@
-"""Secure typed LeadFinder MCP server (M6A-M6C)."""
+"""Secure typed LeadFinder MCP server (M6A-M6D)."""
 
 from __future__ import annotations
 
@@ -8,10 +8,13 @@ from mcp.server.fastmcp.exceptions import ToolError
 from mcp.types import ToolAnnotations
 
 from app.core.config import Settings, get_settings
+from app.mcp.approvals import ApprovalChallengeService
 from app.mcp.auth import MCPLaunchConfig, resolve_launch_config
 from app.mcp.mutations import LeadMutationService
 from app.mcp.runtime import ToolRuntime
 from app.mcp.schemas import (
+    ApprovalChallengeResult,
+    ApprovalResult,
     HealthResult,
     LeadDetail,
     LeadSearchResult,
@@ -21,27 +24,13 @@ from app.mcp.schemas import (
 )
 from app.mcp.service import LeadReadService
 
-_READ_ONLY = ToolAnnotations(
-    readOnlyHint=True,
-    destructiveHint=False,
-    idempotentHint=True,
-    openWorldHint=False,
-)
-_MUTATING = ToolAnnotations(
-    readOnlyHint=False,
-    destructiveHint=False,
-    idempotentHint=False,
-    openWorldHint=False,
-)
+_READ_ONLY = ToolAnnotations(readOnlyHint=True, destructiveHint=False, idempotentHint=True, openWorldHint=False)
+_MUTATING = ToolAnnotations(readOnlyHint=False, destructiveHint=False, idempotentHint=False, openWorldHint=False)
+_APPROVAL = ToolAnnotations(readOnlyHint=False, destructiveHint=True, idempotentHint=False, openWorldHint=False)
 
 
 def _fastmcp_kwargs(launch: MCPLaunchConfig) -> dict:
-    kwargs = {
-        "host": launch.host,
-        "port": launch.port,
-        "json_response": True,
-        "stateless_http": True,
-    }
+    kwargs = {"host": launch.host, "port": launch.port, "json_response": True, "stateless_http": True}
     if launch.transport == "streamable-http":
         kwargs["token_verifier"] = launch.token_verifier
         kwargs["auth"] = AuthSettings(
@@ -56,6 +45,7 @@ def create_server(
     service: LeadReadService | None = None,
     *,
     mutation_service: LeadMutationService | None = None,
+    challenge_service: ApprovalChallengeService | None = None,
     settings: Settings | None = None,
     runtime: ToolRuntime | None = None,
 ) -> FastMCP:
@@ -64,6 +54,7 @@ def create_server(
     service = service or LeadReadService()
     session_factory = service.session_factory
     mutation_service = mutation_service or LeadMutationService(session_factory=session_factory)
+    challenge_service = challenge_service or ApprovalChallengeService(session_factory=session_factory, settings=settings)
     runtime = runtime or ToolRuntime(
         session_factory=session_factory,
         max_calls_per_minute=settings.MCP_MAX_CALLS_PER_MINUTE,
@@ -72,8 +63,8 @@ def create_server(
     mcp = FastMCP(
         "LeadFinder",
         instructions=(
-            "Owner-only LeadFinder controls. Every call is bounded and audited. Redraft and mute "
-            "never approve a reply or send to a platform."
+            "Owner-only LeadFinder controls. Every call is bounded and audited. Approval requires "
+            "a short-lived verification value delivered separately to the configured Telegram owner chat."
         ),
         **_fastmcp_kwargs(launch),
     )
@@ -81,13 +72,11 @@ def create_server(
     @mcp.tool(annotations=_READ_ONLY)
     async def health() -> HealthResult:
         """Check the MCP process and database connection."""
-
         async def operation() -> HealthResult:
             try:
                 return await service.health()
             except Exception as exc:
                 raise ToolError("LeadFinder database is unavailable") from exc
-
         return await runtime.execute("health", {}, operation)
 
     @mcp.tool(annotations=_READ_ONLY)
@@ -100,28 +89,17 @@ def create_server(
         limit: int = 20,
     ) -> LeadSearchResult:
         """Search leads with bounded newest-first cursor pagination."""
-        arguments = {
-            "status": status,
-            "pack": pack,
-            "source": source,
-            "min_fit_score": min_fit_score,
-            "cursor": cursor,
-            "limit": limit,
-        }
-        return await runtime.execute(
-            "search_leads", arguments, lambda: service.search_leads(**arguments)
-        )
+        arguments = {"status": status, "pack": pack, "source": source, "min_fit_score": min_fit_score, "cursor": cursor, "limit": limit}
+        return await runtime.execute("search_leads", arguments, lambda: service.search_leads(**arguments))
 
     @mcp.tool(annotations=_READ_ONLY)
     async def get_lead(lead_id: int) -> LeadDetail:
         """Get one lead with bounded post text, drafts, and send history."""
-
         async def operation() -> LeadDetail:
             result = await service.get_lead(lead_id)
             if result is None:
                 raise ToolError(f"lead #{lead_id} not found")
             return result
-
         return await runtime.execute("get_lead", {"lead_id": lead_id}, operation)
 
     @mcp.tool(annotations=_READ_ONLY)
@@ -134,15 +112,29 @@ def create_server(
     async def redraft(lead_id: int, guidance: str) -> RedraftResult:
         """Replace active draft variants while archiving every previous draft snapshot."""
         arguments = {"lead_id": lead_id, "guidance": guidance}
-        return await runtime.execute(
-            "redraft", arguments, lambda: mutation_service.redraft(**arguments)
-        )
+        return await runtime.execute("redraft", arguments, lambda: mutation_service.redraft(**arguments))
 
     @mcp.tool(annotations=_MUTATING)
     async def mute(kind: str, value: str, pack: str | None = None) -> MuteResult:
         """Add an idempotent keyword or community mute using existing normalization."""
         arguments = {"kind": kind, "value": value, "pack": pack}
         return await runtime.execute("mute", arguments, lambda: mutation_service.mute(**arguments))
+
+    @mcp.tool(annotations=_MUTATING)
+    async def request_approval_code(lead_id: int, variant: str) -> ApprovalChallengeResult:
+        """Deliver a one-time verification value only to the configured Telegram owner chat."""
+        arguments = {"lead_id": lead_id, "variant": variant}
+        return await runtime.execute("request_approval_code", arguments, lambda: challenge_service.request_approval_code(**arguments))
+
+    @mcp.tool(annotations=_APPROVAL)
+    async def approve(lead_id: int, variant: str, verification_value: str) -> ApprovalResult:
+        """Approve exactly one variant using its Telegram-delivered verification value."""
+        audit_arguments = {"lead_id": lead_id, "variant": variant, "approval_code": verification_value}
+        return await runtime.execute(
+            "approve",
+            audit_arguments,
+            lambda: challenge_service.approve(lead_id, variant, verification_value),
+        )
 
     return mcp
 
