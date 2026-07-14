@@ -55,6 +55,20 @@ jobs:
         run: |
           uv run alembic downgrade 008
           uv run alembic upgrade head
+      - name: MCP smoke
+        run: |
+          set +e
+          uv run python scripts/mcp_smoke.py --in-memory >mcp-smoke.log 2>&1
+          status=$?
+          cat mcp-smoke.log
+          exit $status
+      - name: Upload MCP smoke report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: mcp-smoke
+          path: mcp-smoke.log
+          if-no-files-found: ignore
       - name: Test
         run: uv run pytest -q --junitxml=pytest-results.xml
       - name: Upload pytest report
