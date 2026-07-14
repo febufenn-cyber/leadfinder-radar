@@ -81,6 +81,18 @@ class Settings(BaseSettings):
     CLASSIFY_TIMEOUT_SECONDS: int = 90
     DRAFT_TIMEOUT_SECONDS: int = 240  # sonnet writing 2-3 variants is slower than haiku
 
+    # ---- MCP owner-control surface (M6) ----
+    # Stdio is the safe default. HTTP requires both an explicit transport switch
+    # and a non-empty bearer token; non-loopback binding additionally requires
+    # MCP_ALLOW_REMOTE=true.
+    MCP_TRANSPORT: Literal["stdio", "streamable-http"] = "stdio"
+    MCP_BIND_HOST: str = "127.0.0.1"
+    MCP_BIND_PORT: int = 8101
+    MCP_AUTH_TOKEN: str = ""
+    MCP_ALLOW_REMOTE: bool = False
+    MCP_MAX_CALLS_PER_MINUTE: int = 60
+    MCP_TOOL_TIMEOUT_SECONDS: int = 30
+
 
 @lru_cache
 def get_settings() -> Settings:
