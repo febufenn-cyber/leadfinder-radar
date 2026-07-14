@@ -136,11 +136,10 @@ M6 adds an owner-only Model Context Protocol surface without bypassing the human
 '''
           if marker not in text:
               path.write_text(text.rstrip() + section + "\n", encoding="utf-8")
-          Path(".github/workflows/m6e-features-finalize.yml").unlink(missing_ok=True)
           PY
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add docs/FEATURES.md .github/workflows/m6e-features-finalize.yml
+          git add docs/FEATURES.md
           if ! git diff --cached --quiet; then
             git commit -m "docs: append M6 feature reference"
             git push origin HEAD:${{ github.head_ref }}
